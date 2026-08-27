@@ -30,3 +30,6 @@ test-results/
 .env
 .env.local
 .env.*.local
+# auto-test
+.auto-test/reports/runs/*/.tmp/
+.auto-test/.env

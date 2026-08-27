@@ -23,8 +23,20 @@ import { deleteCommand } from './commands/delete.js';
 import { historyCommand } from './commands/history.js';
 import { healCommand } from './commands/heal.js';
 import { skillExportCommand } from './commands/skill-export.js';
+import {
+  modelsListCommand,
+  modelsCurrentCommand,
+  modelsSelectCommand,
+} from './commands/models.js';
+import {
+  authListCommand,
+  authInitCommand,
+  authRefreshCommand,
+  authGenerateCommand,
+} from './commands/auth.js';
 import { CliError, ExitCode } from './utils/errors.js';
 import { logger } from './utils/logger.js';
+import { PRIORITIES, type Priority } from './store/types.js';
 
 const program = new Command();
 
@@ -54,6 +66,14 @@ program
   .description('根据描述（或页面探索）生成测试用例')
   .option('-u, --url <url>', '目标 URL，启用页面探索模式')
   .option('-n, --name <name>', '用例名（kebab-case）')
+  .option('-p, --priority <priority>', '用例优先级（必填）：P0|P1|P2|P3', (v) => {
+    const up = String(v).trim().toUpperCase();
+    if (!(PRIORITIES as readonly string[]).includes(up)) {
+      throw new Error(`--priority 必须是 ${PRIORITIES.join('|')} 之一，当前 "${v}"`);
+    }
+    return up as Priority;
+  })
+  .option('--model <model>', '本次生成使用的 model（覆盖 config.agent.model），格式 provider/id')
   .option('--page-object', '同步生成 Page Object 文件')
   .option('--tag <tag>', '附加标签，可多次传入', (v, prev: string[]) => prev.concat(v), [] as string[])
   .option('--json', '输出 JSON 格式')
@@ -72,6 +92,19 @@ program
   .option('--workers <n>', '并行 worker 数', (v) => parseInt(v, 10))
   .option('--retries <n>', '重试次数', (v) => parseInt(v, 10))
   .option('--grep <pattern>', '只运行匹配标题的用例')
+  .option('--priority <priority>', '按优先级过滤：P0|P1|P2|P3，可逗号分隔', (v) => {
+    const list = String(v).split(',').map((s) => s.trim().toUpperCase());
+    for (const p of list) {
+      if (!(PRIORITIES as readonly string[]).includes(p)) {
+        throw new Error(`--priority 必须是 ${PRIORITIES.join('|')} 之一，当前 "${p}"`);
+      }
+    }
+    return list as Priority[];
+  })
+  .option('--header <kv>', '注入 HTTP header，K=V 形式，可多次', (v, prev: string[]) => prev.concat(v), [] as string[])
+  .option('--storage-state <path>', '覆盖 config.auth.storageState（运行指定 storageState 文件）')
+  .option('--no-auth', '跳过 storageState（公开页测试场景）')
+  .option('--auth <name>', '按 auth 角色过滤用例（meta.auth === name）')
   .option('--json', '输出 JSON 格式')
   .action(runCommand);
 
@@ -89,6 +122,16 @@ program
   .alias('ls')
   .description('列出所有用例')
   .option('--tag <tag>', '按 tag 过滤')
+  .option('--priority <priority>', '按优先级过滤：P0|P1|P2|P3，可逗号分隔', (v) => {
+    const list = String(v).split(',').map((s) => s.trim().toUpperCase());
+    for (const p of list) {
+      if (!(PRIORITIES as readonly string[]).includes(p)) {
+        throw new Error(`--priority 必须是 ${PRIORITIES.join('|')} 之一，当前 "${p}"`);
+      }
+    }
+    return list as Priority[];
+  })
+  .option('--auth <name>', '按 auth 角色过滤')
   .option('--json', '输出 JSON 格式')
   .action(listCommand);
 
@@ -137,6 +180,57 @@ skillCmd
   .action(async (options: Parameters<typeof skillExportCommand>[0]) => {
   await skillExportCommand(options);
 });
+
+// --- models ---
+// 数据源是 pi-agent ModelRuntime（@earendil-works/pi-coding-agent），
+// auto-test 不维护私有 model 列表。
+const modelsCmd = program
+  .command('models')
+  .description('管理 agent model（数据源：pi-agent）');
+modelsCmd
+  .command('list')
+  .description('列出 pi-agent 支持的 provider/model')
+  .option('--all', '列出所有 model（包括未登录 provider）')
+  .option('--json', '输出 JSON 格式')
+  .action(modelsListCommand);
+modelsCmd
+  .command('current')
+  .description('查看当前选定的 model')
+  .option('--json', '输出 JSON 格式')
+  .action(modelsCurrentCommand);
+modelsCmd
+  .command('select')
+  .description('交互式选择 model 并写入 config.json')
+  .option('--json', '输出 JSON 格式')
+  .action(modelsSelectCommand);
+
+// --- auth ---
+// 目录约定：.auto-test/auth/<name>.setup.ts + .auto-test/auth/storage/<name>.json
+const authCmd = program
+  .command('auth')
+  .description('管理 auth 角色（setup 文件 + storageState）');
+authCmd
+  .command('list')
+  .description('列出所有 *.setup.ts')
+  .option('--json', '输出 JSON 格式')
+  .action(authListCommand);
+authCmd
+  .command('init <name>')
+  .description('生成 setup 文件模板（手写登录步骤）')
+  .option('--json', '输出 JSON 格式')
+  .action(authInitCommand);
+authCmd
+  .command('refresh <name>')
+  .description('单独跑 setup 文件，刷新 storageState')
+  .option('--json', '输出 JSON 格式')
+  .action(authRefreshCommand);
+authCmd
+  .command('generate <description>')
+  .description('自然语言描述生成 setup 文件（PI 辅助）')
+  .option('-n, --name <name>', 'auth name（kebab-case）')
+  .option('-u, --url <url>', '目标 URL（启用探索）')
+  .option('--json', '输出 JSON 格式')
+  .action(authGenerateCommand);
 
 program.parseAsync(process.argv).catch((err: unknown) => {
   if (err instanceof CliError) {

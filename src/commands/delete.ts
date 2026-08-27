@@ -7,7 +7,7 @@
  */
 import { createInterface } from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
-import { CaseStore } from '../store/case-store.js';
+import { createStores } from '../store/index.js';
 import { loadConfig } from '../config.js';
 import { CliError, ExitCode } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
@@ -39,7 +39,7 @@ export async function deleteCommand(name: string, options: DeleteOptions): Promi
 
   const cwd = process.cwd();
   const config = loadConfig(cwd);
-  const caseStore = new CaseStore({ cwd, casesDir: config.storage.casesDir });
+  const { caseStore } = createStores(cwd);
 
   caseStore.delete(name);
 

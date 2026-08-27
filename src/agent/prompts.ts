@@ -38,6 +38,7 @@ export interface PromptInput {
   selectorPolicy: SelectorPolicy;
   exploredUrl?: string | null;
   pageObjectEnabled: boolean;
+  defaultPriority: 'P0' | 'P1' | 'P2' | 'P3';
   /** 仅 explore-assisted 模式 */
   accessibilitySnapshot?: string;
   /** 仅 explore-assisted 模式 */
@@ -172,4 +173,25 @@ export function buildHealPrompt(input: {
   parts.push('3. 调用 update_case 工具提交修复后的 name + code');
   parts.push('4. 输出修复要点（1-2 句）');
   return parts.join('\n');
+}export interface SetupPromptInput {
+  description: string;
+  name: string;
+  url: string | null;
+  storageStateRel: string;
+}
+
+export function buildGenerateSetupPrompt(input: SetupPromptInput): string {
+  return [
+    '你是 auto-test 的 auth setup 生成助手。',
+    '任务：为 ' + input.name + ' 角色生成 setup.ts',
+    '登录页：' + (input.url ?? '从描述推断'),
+    'storageState：' + input.storageStateRel,
+    '',
+    '约束：',
+    '- import: test as setup, expect',
+    '- 密码从 process.env 读取',
+    '- 末尾 storageState 调用',
+    '',
+    '用户描述：' + input.description,
+  ].join('\n');
 }

@@ -1,7 +1,9 @@
 /**
  * show 子命令：查看用例详情（含 spec 与 POM 代码）
+ *
+ * 任务 2 增强：详情中显式输出 priority / group / module / linkedTickets 四个结构化字段。
  */
-import { CaseStore } from '../store/case-store.js';
+import { createStores } from '../store/index.js';
 import { loadConfig } from '../config.js';
 import { CliError, ExitCode } from '../utils/errors.js';
 
@@ -12,7 +14,7 @@ export interface ShowOptions {
 export async function showCommand(name: string, options: ShowOptions): Promise<void> {
   const cwd = process.cwd();
   const config = loadConfig(cwd);
-  const caseStore = new CaseStore({ cwd, casesDir: config.storage.casesDir });
+  const { caseStore } = createStores(cwd);
 
   const data = caseStore.readWithCode(name);
   if (!data) {
@@ -29,6 +31,12 @@ export async function showCommand(name: string, options: ShowOptions): Promise<v
   lines.push('');
   lines.push(data.description);
   lines.push('');
+  lines.push(`**Priority:** ${data.priority ?? '(未分级)'}`);
+  lines.push(`**Group:** ${data.group ?? '(未分类)'}`);
+  lines.push(`**Module:** ${data.module ?? '(未分类)'}`);
+  if (data.linkedTickets && data.linkedTickets.length > 0) {
+    lines.push(`**Tickets:** ${data.linkedTickets.join(', ')}`);
+  }
   lines.push(`**Tags:** ${data.tags.length > 0 ? data.tags.join(', ') : '(none)'}`);
   lines.push(`**Status:** ${data.stats.lastStatus}`);
   lines.push(`**Created:** ${data.createdAt}`);

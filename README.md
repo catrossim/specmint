@@ -296,4 +296,34 @@ npm run typecheck
 
 ## License
 
-MIT
+MIT---
+
+## v2 升级说明（2026-08）
+
+### 关键改动
+
+- **目录布局**：所有 auto-test 产物（含两个配置）都在 `.auto-test/` 下，项目根零污染
+- **路径不可配置**：`.auto-test/` 强制约定，不支持在 config.json 里改 root / casesDir / reportsDir
+- **配置位置**：`auto-test.config.json` → `.auto-test/config.json`；`playwright.config.ts` → `.auto-test/playwright.config.ts`
+- **用例优先级**：`priority` (P0|P1|P2|P3) 强制必填；generate 命令必须 `--priority P0`
+- **PI 输出契约**：归一化层兜底（"高"/p0/urgent → P0）
+- **用例分组**：`group/name.spec.ts` 形式（如 `auth/login-success`）
+- **auth 子系统**：`.auto-test/auth/<name>.setup.ts` + `.auto-test/auth/storage/<name>.json`
+- **Playwright projects**：自动拆 auth-setup + e2e（setup 空时跳过）
+
+### 新命令
+
+- `auto-test auth list / init / refresh / generate`
+- `auto-test models list / current / select`
+- `auto-test list --priority P0,P1 --auth admin`
+- `auto-test run --auth admin --header "K=V" --no-auth`
+
+### 升级步骤
+
+1. 删除项目根的 `auto-test.config.json` 和 `playwright.config.ts`（如有）
+2. 删除项目根的 `tests/` 和 `reports/`（如有）
+3. `npx auto-test init`（重建 `.auto-test/` 布局）
+4. `npx auto-test models select`（首次选择 LLM）
+5. `npx auto-test auth init admin`（如有登录态需求）
+6. `npx auto-test generate "<描述>" --priority P0`（开始生成）
+README_EOF

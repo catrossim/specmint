@@ -1,8 +1,6 @@
 {
-  "$schema": "./schemas/auto-test.config.schema.json",
   "version": "1",
   "agent": {
-    "model": "minimax-cn",
     "delegate": "sdk",
     "systemPromptAdditions": ""
   },
@@ -15,22 +13,27 @@
   },
   "generation": {
     "selectorPolicy": {
-      "prefer": ["getByRole", "getByLabel", "getByPlaceholder", "getByTestId", "getByText"],
-      "avoid": ["nth-child", "nth-of-type", "complex-css", "xpath"]
+      "prefer": [
+        "getByRole",
+        "getByLabel",
+        "getByPlaceholder",
+        "getByTestId",
+        "getByText"
+      ],
+      "avoid": [
+        "nth-child",
+        "nth-of-type",
+        "complex-css",
+        "xpath"
+      ]
     },
     "language": "zh",
     "comments": "verbose",
     "style": "page-object-optional"
   },
   "runner": {
-    "configPath": "./playwright.config.ts",
     "defaultBrowser": "chromium",
     "trace": "on-first-retry",
     "screenshot": "only-on-failure"
-  },
-  "storage": {
-    "casesDir": "./tests",
-    "pageObjectsDir": "./tests/pages",
-    "reportsDir": "./reports"
   }
 }

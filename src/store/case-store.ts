@@ -5,30 +5,35 @@
  *   <casesDir>/
  *     <name>.spec.ts
  *     <name>.meta.json
- *     pages/                          (Page Object 文件，按需)
+ *     <pageObjectsDir>/                  (Page Object 文件，按需)
  *       <name>.page.ts
  *
  * 设计原则：
  * - 同步 fs API 用得足够简单（用例数量级 < 数千），避免引入异步锁
  * - meta.json 解析失败时跳过 + warning，不让单个坏用例阻塞整个 list
  * - 所有写入失败转换为 CliError(IO_ERROR)，便于 CLI 层输出结构化错误
+ * - 路径必须从外部（createStores）传入，不再有 './tests' 兜底
  */
 import {
   existsSync,
   mkdirSync,
   readdirSync,
   readFileSync,
+  statSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { dirname, join, relative as pathRelative, resolve } from 'node:path';
 import { CliError, ExitCode } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
+import { normalizeCaseMeta, normalizeTags } from '../utils/normalize-meta.js';
+import { throwIfInvalid } from '../utils/case-schema.js';
 import type {
   CaseMeta,
   CaseStatus,
   CaseSummary,
   CaseWithCode,
+  Priority,
   SelectorPolicy,
 } from './types.js';
 
@@ -36,8 +41,10 @@ const KEBAB_CASE_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 const MAX_NAME_LENGTH = 80;
 
 export interface CaseStoreOptions {
-  /** 用例库根目录（相对 cwd，默认 ./tests） */
-  casesDir?: string;
+  /** 用例库根目录（绝对路径或相对 cwd）。createStores 总会传入。 */
+  casesDir: string;
+  /** Page Object 目录（绝对路径或相对 cwd）。默认 <casesDir>/pages。 */
+  pageObjectsDir?: string;
   /** 工作根，默认 process.cwd() */
   cwd?: string;
 }
@@ -45,6 +52,13 @@ export interface CaseStoreOptions {
 export interface CaseSaveInput {
   name: string;
   description: string;
+  /** 必填语义：generate 命令会强制传入，save 时若缺失会抛错。 */
+  priority?: Priority;
+  group?: string;
+  module?: string;
+  linkedTickets?: string[];
+  /** 阶段 2：关联 auth 角色（kebab-case）。可选。 */
+  auth?: string;
   tags?: string[];
   source: {
     type: CaseMeta['source']['type'];
@@ -53,7 +67,7 @@ export interface CaseSaveInput {
   };
   generation: {
     mode: CaseMeta['generation']['mode'];
-    model: string;
+    model?: string;
     exploredUrl: string | null;
     selectorPolicy: SelectorPolicy;
   };
@@ -75,10 +89,14 @@ export interface CaseSaveResult {
 export class CaseStore {
   private readonly cwd: string;
   private readonly casesDir: string;
+  private readonly pageObjectsDir: string;
 
-  constructor(options: CaseStoreOptions = {}) {
+  constructor(options: CaseStoreOptions) {
     this.cwd = options.cwd ?? process.cwd();
-    this.casesDir = resolve(this.cwd, options.casesDir ?? './tests');
+    this.casesDir = resolve(this.cwd, options.casesDir);
+    this.pageObjectsDir = options.pageObjectsDir
+      ? resolve(this.cwd, options.pageObjectsDir)
+      : join(this.casesDir, 'pages');
   }
 
   // --- 路径解析 ---
@@ -92,7 +110,7 @@ export class CaseStore {
   }
 
   pageObjectPath(name: string): string {
-    return join(this.casesDir, 'pages', `${name}.page.ts`);
+    return join(this.pageObjectsDir, `${name}.page.ts`);
   }
 
   root(): string {
@@ -102,11 +120,13 @@ export class CaseStore {
   // --- 校验 ---
 
   private validateName(name: string): void {
-    if (!KEBAB_CASE_RE.test(name)) {
+    // 允许 "<group>/<kebab-case>" 形式，每段都必须是 kebab-case
+    const GROUPED_NAME_RE = /^[a-z0-9]+(-[a-z0-9]+)*(\/[a-z0-9]+(-[a-z0-9]+)*)*$/;
+    if (!GROUPED_NAME_RE.test(name)) {
       throw new CliError({
         code: ExitCode.USAGE_ERROR,
-        message: `用例名必须是 kebab-case：${name}`,
-        hint: '只允许小写字母、数字、连字符，且不能以连字符开头或结尾，例如：login-success',
+        message: `用例名格式不合法：${name}`,
+        hint: '只允许小写字母、数字、连字符；按功能模块分组时用 "<group>/<name>" 形式，例如：auth/login-success',
       });
     }
     if (name.length > MAX_NAME_LENGTH) {
@@ -126,21 +146,39 @@ export class CaseStore {
   /**
    * 列出用例摘要。
    * - 默认按 name 升序
+   * - 递归扫描 casesDir 下所有子目录，支持按 group（功能模块）分目录
    * - meta.json 缺失或解析失败时跳过并 warning
-   * - 支持按 tag 与 name 子串过滤
+   * - 支持按 tag、name 子串、priority（单个或数组）过滤
    */
-  list(filter: { tag?: string; pattern?: string } = {}): CaseSummary[] {
+  list(
+    filter: {
+      tag?: string;
+      pattern?: string;
+      priority?: Priority | Priority[];
+      auth?: string;
+    } = {},
+  ): CaseSummary[] {
     if (!existsSync(this.casesDir)) return [];
 
-    const files = readdirSync(this.casesDir);
+    const priorityFilter: ReadonlySet<Priority> | null = Array.isArray(filter.priority)
+      ? new Set(filter.priority as Priority[])
+      : filter.priority
+        ? new Set([filter.priority])
+        : null;
+
+    // 递归收集所有 .spec.ts 文件路径
+    const specFiles = collectSpecFiles(this.casesDir);
     const summaries: CaseSummary[] = [];
 
-    for (const file of files) {
-      if (!file.endsWith('.spec.ts')) continue;
-      const name = file.slice(0, -'.spec.ts'.length);
+    for (const specFile of specFiles) {
+      // 从 casesDir 推导 name（含 group 前缀），例如 auth/login-success
+      const rel = pathRelative(this.casesDir, specFile).replace(/\\/g, '/');
+      if (!rel.endsWith('.spec.ts')) continue;
+      const name = rel.slice(0, -'.spec.ts'.length);
       if (filter.pattern && !name.includes(filter.pattern)) continue;
 
-      const metaFile = this.metaPath(name);
+      // meta 与 spec 同目录
+      const metaFile = specFile.replace(/\.spec\.ts$/, '.meta.json');
       if (!existsSync(metaFile)) {
         logger.warn(`用例 ${name} 缺少 meta.json，跳过`);
         continue;
@@ -155,6 +193,8 @@ export class CaseStore {
       }
 
       if (filter.tag && !meta.tags.includes(filter.tag)) continue;
+      if (priorityFilter && (!meta.priority || !priorityFilter.has(meta.priority))) continue;
+      if (filter.auth && meta.auth !== filter.auth) continue;
 
       const pomRelative = meta.pageObject.enabled && meta.pageObject.file
         ? pathRelative(this.cwd, resolve(this.casesDir, meta.pageObject.file))
@@ -163,11 +203,13 @@ export class CaseStore {
       summaries.push({
         name,
         description: meta.description,
+        priority: meta.priority,
+        auth: meta.auth,
         tags: meta.tags,
         status: meta.stats.lastStatus,
         lastRunAt: meta.stats.lastRunAt,
-        specPath: pathRelative(this.cwd, this.specPath(name)),
-        metaPath: pathRelative(this.cwd, this.metaPath(name)),
+        specPath: pathRelative(this.cwd, specFile),
+        metaPath: pathRelative(this.cwd, metaFile),
         pageObjectFile: pomRelative,
       });
     }
@@ -212,6 +254,7 @@ export class CaseStore {
    * 首次保存用例。
    * - 已存在抛 ALREADY_EXISTS；如需覆盖请用 updateCode + updateMeta
    * - 启用 Page Object 时一并写入 POM 文件
+   * - 落盘前先 normalize（容错 PI 输出）+ validate（强制 priority 等域）
    */
   save(input: CaseSaveInput, specCode: string): CaseSaveResult {
     this.validateName(input.name);
@@ -224,14 +267,53 @@ export class CaseStore {
       });
     }
 
+    // 任务 3：归一化（容错 PI 输出）+ 校验（严格 enum）
+    const { value: normalized, warnings } = normalizeCaseMeta({
+      priority: input.priority,
+      tags: input.tags,
+      group: input.group,
+      module: input.module,
+      linkedTickets: input.linkedTickets,
+      auth: input.auth,
+    });
+    for (const w of warnings) logger.warn(`[case:${input.name}] ${w}`);
+
+    // priority 是 generate 命令强制传入的；若此处仍为 null，说明调用方没传，抛错
+    if (normalized.priority === null) {
+      throw new CliError({
+        code: ExitCode.USAGE_ERROR,
+        message: `用例 ${input.name} 缺少 priority（必须为 ${input.priority === undefined ? 'CLI --priority 参数' : 'P0|P1|P2|P3 之一'}）`,
+      });
+    }
+
+    const candidateMeta: Partial<CaseMeta> = {
+      name: input.name,
+      description: input.description,
+      priority: normalized.priority,
+      group: normalized.group ?? undefined,
+      module: normalized.module ?? undefined,
+      linkedTickets: normalized.linkedTickets.length > 0 ? normalized.linkedTickets : undefined,
+      auth: normalized.auth ?? undefined,
+      tags: normalized.tags,
+    };
+    throwIfInvalid(candidateMeta);
+
     ensureDir(this.casesDir);
+    // name 含 group 前缀（如 "auth/login-success"）时确保子目录存在
+    const group = input.name.includes('/') ? dirname(this.specPath(input.name)) : this.casesDir;
+    if (group !== this.casesDir) ensureDir(group);
     const now = new Date().toISOString();
     const meta: CaseMeta = {
       name: input.name,
       description: input.description,
+      priority: normalized.priority,
+      group: normalized.group ?? undefined,
+      module: normalized.module ?? undefined,
+      linkedTickets:
+        normalized.linkedTickets.length > 0 ? normalized.linkedTickets : undefined,
       createdAt: now,
       updatedAt: now,
-      tags: dedupe(input.tags ?? []),
+      tags: dedupe(normalized.tags),
       source: {
         type: input.source.type,
         input: input.source.input,
@@ -285,9 +367,31 @@ export class CaseStore {
       });
     }
 
+    // 任务 3：patch 中的可写字段也走归一化+校验
+    const normalizedPatch: Partial<CaseMeta> = { ...patch };
+    if (patch.priority !== undefined || patch.tags !== undefined || patch.group !== undefined ||
+        patch.module !== undefined || patch.linkedTickets !== undefined) {
+      const { value, warnings } = normalizeCaseMeta({
+        priority: patch.priority,
+        tags: patch.tags,
+        group: patch.group,
+        module: patch.module,
+        linkedTickets: patch.linkedTickets,
+        auth: patch.auth,
+      });
+      for (const w of warnings) logger.warn(`[case:${name}] ${w}`);
+      normalizedPatch.priority = value.priority ?? undefined;
+      normalizedPatch.tags = value.tags;
+      normalizedPatch.group = value.group ?? undefined;
+      normalizedPatch.module = value.module ?? undefined;
+      normalizedPatch.linkedTickets = value.linkedTickets.length > 0 ? value.linkedTickets : undefined;
+      normalizedPatch.auth = value.auth ?? undefined;
+    }
+    throwIfInvalid({ ...current, ...normalizedPatch });
+
     const next: CaseMeta = {
       ...current,
-      ...patch,
+      ...normalizedPatch,
       name: current.name,
       createdAt: current.createdAt,
       updatedAt: new Date().toISOString(),
@@ -403,6 +507,42 @@ function ensureDir(path: string): void {
   if (!existsSync(path)) mkdirSync(path, { recursive: true });
 }
 
+/**
+ * 递归收集目录树下所有 .spec.ts 文件绝对路径。
+ * - 跳过 pages/ 子目录（POM 不属于用例）
+ */
+function collectSpecFiles(rootDir: string): string[] {
+  const out: string[] = [];
+
+  function walk(dir: string): void {
+    let entries: string[];
+    try {
+      entries = readdirSync(dir);
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const full = join(dir, entry);
+      let stat;
+      try {
+        stat = statSync(full);
+      } catch {
+        continue;
+      }
+      if (stat.isDirectory()) {
+        // 跳过 Page Object 目录与运行产物目录
+        if (entry === 'pages' || entry === 'node_modules' || entry.startsWith('.')) continue;
+        walk(full);
+      } else if (stat.isFile() && entry.endsWith('.spec.ts')) {
+        out.push(full);
+      }
+    }
+  }
+
+  walk(rootDir);
+  return out;
+}
+
 function safeUnlink(path: string): void {
   try {
     unlinkSync(path);
@@ -429,3 +569,6 @@ function emptyStats(): CaseMeta['stats'] {
     averageDurationMs: 0,
   };
 }
+
+// 保留 normalizeTags 的别名导出，便于测试或外部引用
+export { normalizeTags };

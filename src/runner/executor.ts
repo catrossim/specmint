@@ -25,13 +25,29 @@ export interface RunOptions {
   workers?: number;
   retries?: number;
   grep?: string;
-  configPath?: string;
+  /** Playwright 配置文件绝对路径（必传，由 createStores 注入 .auto-test/playwright.config.ts）。 */
+  runnerConfigPath: string;
   maxFailures?: number;
   cwd?: string;
-  casesDir?: string;
-  reportsDir?: string;
+  /** 用例库根目录（绝对路径）。必传，由 createStores 注入。 */
+  casesDir: string;
+  /** 运行产物根目录（绝对路径）。必传，由 createStores 注入。 */
+  reportsDir: string;
   /** 透传给 playwright test 的额外参数（高级选项） */
   passthrough?: string[];
+  /**
+   * 鉴权注入（阶段 1）：
+   * - headers：可多次传 "K=V" 形式，转成 AUTO_TEST_HEADER_<KEY>=V env
+   * - storageState：覆盖 config.auth.storageState（→ AUTO_TEST_STORAGE_STATE env）
+   * - noAuth：跳过 storageState（→ AUTO_TEST_NO_AUTH=1）
+   *
+   * env 透传由 playwright.config.ts 在子进程内展开并落到 extraHTTPHeaders / storageState。
+   */
+  auth?: {
+    headers?: string[];
+    storageState?: string;
+    noAuth?: boolean;
+  };
 }
 
 export interface RunResult {
@@ -48,13 +64,13 @@ const PW_TEST_BIN_ARGS = ['playwright', 'test'];
 
 export async function runTests(options: RunOptions): Promise<RunResult> {
   const cwd = options.cwd ?? process.cwd();
-  const reportsDir = options.reportsDir ?? './reports';
-  const casesDir = options.casesDir ?? './tests';
+  const reportsDir = options.reportsDir;
+  const casesDir = options.casesDir;
 
   const historyStore = new HistoryStore({ cwd, reportsDir });
 
   const config: RunConfigSnapshot = {
-    configPath: options.configPath ?? './playwright.config.ts',
+    configPath: options.runnerConfigPath,
     baseURL: process.env.AUTO_TEST_BASE_URL ?? null,
     retries: options.retries ?? (process.env.CI ? 2 : 1),
     workers: options.workers ?? (process.env.CI ? 1 : undefined) ?? 1,
@@ -78,12 +94,12 @@ export async function runTests(options: RunOptions): Promise<RunResult> {
   try {
     spawnResult = await spawnPlaywright(args, {
       cwd,
-      env: {
-        ...process.env,
-        AUTO_TEST_RUN_ID: record.runId,
-        AUTO_TEST_REPORTS_DIR: historyStore.root(),
-        AUTO_TEST_CASES_DIR: resolve(cwd, casesDir),
-      },
+      env: buildSpawnEnv({
+        runId: record.runId,
+        reportsDir: historyStore.root(),
+        casesDirAbs: resolve(cwd, casesDir),
+        auth: options.auth,
+      }),
     });
   } catch (err) {
     // spawn 本身失败（不是测试失败）
@@ -128,7 +144,7 @@ export async function runTests(options: RunOptions): Promise<RunResult> {
 
 function buildPlaywrightArgs(options: RunOptions): string[] {
   const args: string[] = [...PW_TEST_BIN_ARGS];
-  if (options.configPath) args.push('--config', options.configPath);
+  if (options.runnerConfigPath) args.push('--config', options.runnerConfigPath);
   if (options.workers !== undefined) args.push('--workers', String(options.workers));
   if (options.retries !== undefined) args.push('--retries', String(options.retries));
   if (options.maxFailures !== undefined) args.push('--max-failures', String(options.maxFailures));
@@ -146,6 +162,47 @@ function buildPlaywrightArgs(options: RunOptions): string[] {
 interface SpawnResult {
   exitCode: number;
   signal: NodeJS.Signals | null;
+}
+
+/**
+ * 构造子进程 env。
+ * - AUTO_TEST_RUN_ID / REPORTS_DIR / CASES_DIR：auto-test 内部用
+ * - AUTO_TEST_HEADER_<KEY>=V：注入 HTTP header（playwright.config.ts 展开为 extraHTTPHeaders）
+ * - AUTO_TEST_STORAGE_STATE=<path>：覆盖 config.auth.storageState
+ * - AUTO_TEST_NO_AUTH=1：跳过 storageState（公开页测试）
+ */
+function buildSpawnEnv(input: {
+  runId: string;
+  reportsDir: string;
+  casesDirAbs: string;
+  auth?: RunOptions['auth'];
+}): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    AUTO_TEST_RUN_ID: input.runId,
+    AUTO_TEST_REPORTS_DIR: input.reportsDir,
+    AUTO_TEST_CASES_DIR: input.casesDirAbs,
+  };
+
+  const auth = input.auth;
+  if (auth?.noAuth) {
+    env.AUTO_TEST_NO_AUTH = '1';
+  } else if (auth?.storageState) {
+    env.AUTO_TEST_STORAGE_STATE = auth.storageState;
+  }
+
+  if (auth?.headers) {
+    for (const raw of auth.headers) {
+      const eq = raw.indexOf('=');
+      if (eq <= 0) continue;
+      const k = raw.slice(0, eq).trim();
+      const v = raw.slice(eq + 1);
+      const envKey = 'AUTO_TEST_HEADER_' + k.replace(/-/g, '_').toUpperCase();
+      env[envKey] = v;
+    }
+  }
+
+  return env;
 }
 
 function spawnPlaywright(

@@ -1,7 +1,7 @@
 /**
  * history 子命令：查看运行历史
  */
-import { HistoryStore } from '../store/history-store.js';
+import { createStores } from '../store/index.js';
 import { loadConfig } from '../config.js';
 import { logger } from '../utils/logger.js';
 
@@ -14,7 +14,7 @@ export interface HistoryOptions {
 export async function historyCommand(options: HistoryOptions): Promise<void> {
   const cwd = process.cwd();
   const config = loadConfig(cwd);
-  const historyStore = new HistoryStore({ cwd, reportsDir: config.storage.reportsDir });
+  const { historyStore } = createStores(cwd);
 
   const limit = options.limit ? parseInt(options.limit, 10) : 10;
   const summaries = historyStore.listRuns({

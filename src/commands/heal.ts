@@ -8,8 +8,7 @@
  *   4. pi-agent 调用 update_case 工具覆盖修复
  *   5. 输出修复结果
  */
-import { CaseStore } from '../store/case-store.js';
-import { HistoryStore } from '../store/history-store.js';
+import { createStores } from '../store/index.js';
 import { loadConfig } from '../config.js';
 import { CliError, ExitCode } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
@@ -38,8 +37,7 @@ export async function healCommand(
 ): Promise<HealResult> {
   const cwd = process.cwd();
   const config = loadConfig(cwd);
-  const caseStore = new CaseStore({ cwd, casesDir: config.storage.casesDir });
-  const historyStore = new HistoryStore({ cwd, reportsDir: config.storage.reportsDir });
+  const { caseStore, historyStore } = createStores(cwd);
 
   const data = caseStore.readWithCode(caseName);
   if (!data) {
@@ -94,6 +92,8 @@ export async function healCommand(
     defaultGeneration: data.generation,
     defaultSourceInput: data.source.input,
     defaultSourceType: 'generated',
+    // heal 沿用 meta 中已存的 priority 作为兜底；update_case 工具中未传时不强制要求
+    defaultPriority: data.priority ?? 'P1',
   });
 
   const session = await createAgentSession({

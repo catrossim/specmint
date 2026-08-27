@@ -7,9 +7,9 @@
  *   - 调用 runTests，pattern 拼接为 "<name>.spec.ts|<name2>.spec.ts"
  *     （playwright CLI 支持以空格分隔多个文件名）
  */
-import { HistoryStore } from '../store/history-store.js';
 import { runTests } from '../runner/executor.js';
 import { loadConfig } from '../config.js';
+import { createStores } from '../store/index.js';
 import { ExitCode } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
 
@@ -21,7 +21,7 @@ export interface RerunOptions {
 export async function rerunCommand(options: RerunOptions): Promise<void> {
   const cwd = process.cwd();
   const config = loadConfig(cwd);
-  const historyStore = new HistoryStore({ cwd, reportsDir: config.storage.reportsDir });
+  const { historyStore, storage } = createStores(cwd);
 
   const failedNames = options.from
     ? historyStore.getFailedTestNames(options.from)
@@ -48,9 +48,9 @@ export async function rerunCommand(options: RerunOptions): Promise<void> {
   const result = await runTests({
     pattern,
     cwd,
-    casesDir: config.storage.casesDir,
-    reportsDir: config.storage.reportsDir,
-    configPath: config.runner.configPath,
+    casesDir: storage.casesDir,
+    reportsDir: storage.reportsDir,
+    runnerConfigPath: storage.runnerConfigPath,
     browser: config.runner.defaultBrowser,
   });
 

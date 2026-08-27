@@ -34,7 +34,9 @@ import type {
 } from './types.js';
 
 export interface HistoryStoreOptions {
-  reportsDir?: string;
+  /** 运行产物根目录（绝对路径或相对 cwd）。createStores 总会传入。 */
+  reportsDir: string;
+  /** 工作根，默认 process.cwd() */
   cwd?: string;
 }
 
@@ -50,9 +52,9 @@ export class HistoryStore {
   private readonly cwd: string;
   private readonly reportsDir: string;
 
-  constructor(options: HistoryStoreOptions = {}) {
+  constructor(options: HistoryStoreOptions) {
     this.cwd = options.cwd ?? process.cwd();
-    this.reportsDir = resolve(this.cwd, options.reportsDir ?? './reports');
+    this.reportsDir = resolve(this.cwd, options.reportsDir);
   }
 
   // --- 路径解析 ---

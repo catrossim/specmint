@@ -9,7 +9,7 @@
  *   5. 调用 prompt，等待 LLM 通过 save_case 落盘
  *   6. 输出结果（JSON / 人类可读）
  */
-import { CaseStore } from '../store/case-store.js';
+import { createStores } from '../store/index.js';
 import { loadConfig } from '../config.js';
 import { CliError, ExitCode } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
@@ -17,11 +17,19 @@ import { createAgentSession } from '../agent/session.js';
 import { createCaseTools, CASE_TOOL_NAMES } from '../agent/tools.js';
 import { buildGeneratePrompt } from '../agent/prompts.js';
 import { explorePage, type ExploreResult } from '../agent/explore.js';
+import { PRIORITIES, type Priority } from '../store/types.js';
 
 export interface GenerateOptions {
   url?: string;
   name?: string;
   pageObject?: boolean;
+  /** 任务 2：必须传入的优先级，缺省时报错 */
+  priority?: Priority;
+  /**
+   * 本次生成使用的 model（provider/id），覆盖 config.agent.model。
+   * 推荐通过 `auto-test models select` 设置默认；这里仅做一次性覆盖。
+   */
+  model?: string;
   tag?: string[];
   json?: boolean;
 }
@@ -52,9 +60,19 @@ export async function generateCommand(
     throw new CliError({ code: ExitCode.USAGE_ERROR, message: '缺少需求描述' });
   }
 
+  // 任务 2：--priority 是必填项，避免 LLM 自由发挥污染冒烟集
+  if (!options.priority || !(PRIORITIES as readonly string[]).includes(options.priority)) {
+    throw new CliError({
+      code: ExitCode.USAGE_ERROR,
+      message: `必须通过 --priority 指定用例优先级（${PRIORITIES.join('|')}）`,
+      hint: `示例：auto-test generate "管理员登录跳转 dashboard" --priority P0`,
+    });
+  }
+  const priority: Priority = options.priority;
+
   const cwd = process.cwd();
   const config = loadConfig(cwd);
-  const caseStore = new CaseStore({ cwd, casesDir: config.storage.casesDir });
+  const { caseStore } = createStores(cwd);
 
   // 探索模式
   let exploreResult: ExploreResult | null = null;
@@ -81,6 +99,7 @@ export async function generateCommand(
     selectorPolicy: config.generation.selectorPolicy,
     exploredUrl: exploreResult?.url ?? null,
     pageObjectEnabled: !!options.pageObject,
+    defaultPriority: priority,
     accessibilitySnapshot: exploreResult?.accessibilitySnapshot,
     interactiveElements: exploreResult?.interactiveElements,
   });
@@ -96,11 +115,12 @@ export async function generateCommand(
     },
     defaultSourceInput: description,
     defaultSourceType: 'generated',
+    defaultPriority: priority,
   });
 
   // session
   const session = await createAgentSession({
-    model: config.agent.model,
+    model: options.model ?? config.agent.model,
     customTools,
     toolsAllowlist: [...CASE_TOOL_NAMES],
     onToolCall: (event) => {

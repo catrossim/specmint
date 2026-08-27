@@ -6,8 +6,12 @@
  *
  * 默认导出无参构造的 `AutoTestReporter`；运行时依赖通过环境变量注入：
  * - AUTO_TEST_RUN_ID: 当前运行的 ID（由 executor.ts 在 spawn 子进程前写入）
- * - AUTO_TEST_REPORTS_DIR: reports/ 路径（默认 ./reports）
- * - AUTO_TEST_CASES_DIR: tests/ 路径（默认 ./tests）
+ * - AUTO_TEST_REPORTS_DIR: reports/ 路径（兜底 .auto-test/reports）
+ * - AUTO_TEST_CASES_DIR: tests/ 路径（兜底 .auto-test/cases）
+ *
+ * 兜底策略：env 缺失时使用与主进程一致的默认路径（.auto-test/*），
+ * 让用户在非 auto-test run 触发的场景下也能跑出合理结果，但仍然建议
+ * 走 auto-test run 以获取正确的 env 注入。
  *
  * 执行链路（auto-test run → playwright test 子进程）：
  *   1. executor 调用 HistoryStore.createRun 生成 runId
@@ -52,8 +56,8 @@ function resolveDeps(): ReporterDeps | null {
   if (cachedDeps) return cachedDeps;
   const runId = process.env.AUTO_TEST_RUN_ID;
   if (!runId) return null;
-  const reportsDir = process.env.AUTO_TEST_REPORTS_DIR ?? './reports';
-  const casesDir = process.env.AUTO_TEST_CASES_DIR ?? './tests';
+  const reportsDir = process.env.AUTO_TEST_REPORTS_DIR ?? '.auto-test/reports';
+  const casesDir = process.env.AUTO_TEST_CASES_DIR ?? '.auto-test/cases';
   cachedDeps = {
     runId,
     historyStore: new HistoryStore({ reportsDir }),
