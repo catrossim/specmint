@@ -176,6 +176,7 @@ skillCmd
   .command('export')
   .description('在 ./skills/auto-test/ 生成 agent 可加载的 skill 文件')
   .option('--target <target>', '目标 agent：codebuddy | claude-code', 'codebuddy')
+  .option('--install', '一键安装到 IDE skill 加载目录（codebuddy: .codebuddy/skills/）')
   .option('--json', '输出 JSON 格式')
   .action(async (options: Parameters<typeof skillExportCommand>[0]) => {
   await skillExportCommand(options);

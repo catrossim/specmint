@@ -1,19 +1,25 @@
 /**
  * skill export 子命令：导出 agent skill 定义
  *
- * 产出 ./skills/auto-test/SKILL.md，遵循 CodeBuddy / Claude Code skill 规范
- * （YAML frontmatter + 触发词 + 调用样例 + 输出契约）。
+ * 产出 ./skills/auto-test/SKILL.md，遵循 CodeBuddy / Claude Code skill 规范。
  *
- * 参考了 plan 中提到的 skill-creator Extension 风格（YAML 头 + 描述 + 工作流示例）。
+ * 数据源策略：
+ * - 优先读 skills/auto-test/SKILL.md（仓库内最新内容，由 docs/USAGE.md / examples/e2e-verify.md 同步）
+ * - 找不到则报错（提示先维护 SKILL.md）
+ *
+ * 两个 target 区别：
+ * - codebuddy：完整 YAML frontmatter（description + triggers）
+ * - claude-code：简化 frontmatter（仅 description）
  */
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { CliError, ExitCode } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
 
-export type SkillTarget = 'codebuddy' | 'claude-code';
-
-export interface SkillExportOptions {
+export type SkillTarget = 'codebuddy' | 'claude-code';export interface SkillExportOptions {
   target?: SkillTarget;
+  /** 一键安装到 IDE skill 加载目录（CodeBuddy: .codebuddy/skills/） */
+  install?: boolean;
   json?: boolean;
 }
 
@@ -21,140 +27,97 @@ export interface SkillExportResult {
   ok: boolean;
   target: SkillTarget;
   path: string;
+  /** 渲染模式：'full' = 用仓库 SKILL.md；'compact' = 简化版（claude-code） */
+  mode: 'full' | 'compact';
 }
 
-const SUBCOMMAND_CATALOG = [
-  'init: 初始化项目（创建目录、写入 auto-test.config.json）',
-  'generate <description>: 生成测试用例（可选 --url 触发页面探索）',
-  'run [pattern]: 运行用例（透传 retry/workers/headed/ui/debug 等）',
-  'rerun [--from <runId>]: 重跑最近一次（或指定）失败用例',
-  'list [--tag <tag>]: 列出用例库',
-  'show <name>: 查看用例详情（含 spec 与 POM 代码）',
-  'delete <name> [--yes]: 删除用例',
-  'history [--limit N] [--case <name>]: 查看运行历史',
-  'heal <name> [--from <runId>]: 自动修复失败用例',
-  'skill export [--target codebuddy|claude-code]: 导出本 skill 定义',
-].join('\n- ');
+/**
+ * 仓库内 SKILL.md 路径（数据源）
+ */
+function repoSkillPath(): string {
+  return join(process.cwd(), 'skills', 'auto-test', 'SKILL.md');
+}
 
-const OUTPUT_CONTRACT = `
-## 输出约定
-
-- 所有命令支持 \`--json\` 输出
-- 错误结构化: \`{ ok: false, error: { code, message, hint } }\`
-- 退出码:
-  - 0: 成功
-  - 2: 参数错误
-  - 3: 子命令未实现
-  - 4: 资源不存在
-  - 5: 重复创建
-  - 6: agent 调用失败
-  - 7: 测试失败
-  - 8: IO 错误
-`.trim();
-
-const BEST_PRACTICES = `
-## 最佳实践
-
-1. **生成用例前可加 \`--url\` 探索页面**，提高定位准确度
-2. **\`--page-object\` 模式**生成 POM 文件，提升可维护性
-3. **\`--json\` 输出**便于 agent 解析
-4. **\`rerun\` 一键重跑**失败用例，避免手动筛选
-5. **\`heal <name>\`** 把失败用例 + 错误日志委托给 pi-agent 自动修复
-6. 用例库与运行历史以纯文件存储，可 git 管理
-`.trim();
-
-const CALL_EXAMPLES = `
-## 调用样例
-
-\`\`\`bash
-# 初始化项目
-auto-test init
-
-# 生成用例（纯描述）
-auto-test generate "登录：用户名密码登录后跳转首页" --name login-success
-
-# 带页面探索的生成
-auto-test generate "完整登录流程" --url https://example.com/login
-
-# 运行
-auto-test run
-
-# 查看最近 5 次运行历史
-auto-test history --limit 5
-
-# 重跑最近一次失败用例
-auto-test rerun
-
-# 修复失败用例
-auto-test heal login-success
-\`\`\`
-`.trim();
-
-export async function skillExportCommand(
-  options: SkillExportOptions,
-): Promise<SkillExportResult> {
+/**
+ * 渲染目标 SKILL.md
+ * - codebuddy：直接拷贝仓库 SKILL.md（已经是 codebuddy 格式）
+ * - claude-code：剥离 triggers 段
+ */
+export async function skillExportCommand(options: SkillExportOptions): Promise<SkillExportResult> {
   const target: SkillTarget = options.target ?? 'codebuddy';
   if (target !== 'codebuddy' && target !== 'claude-code') {
-    throw new Error(`不支持的 target: ${target}（可选: codebuddy | claude-code）`);
+    throw new CliError({
+      code: ExitCode.USAGE_ERROR,
+      message: `不支持的 target: ${target}`,
+      hint: '可选: codebuddy | claude-code',
+    });
   }
 
-  const skillContent = generateSkillContent(target);
+  const sourcePath = repoSkillPath();
+  if (!existsSync(sourcePath)) {
+    throw new CliError({
+      code: ExitCode.NOT_FOUND,
+      message: `找不到源 SKILL.md：${sourcePath}`,
+      hint: '请确认仓库内 skills/auto-test/SKILL.md 存在',
+    });
+  }
+
+  const raw = readFileSync(sourcePath, 'utf-8');
+  const rendered = target === 'codebuddy' ? raw : renderForClaudeCode(raw);
+
   const outDir = join(process.cwd(), 'skills', 'auto-test');
-  const outFile = join(outDir, 'SKILL.md');
-
+  let outFile = join(outDir, `SKILL.${target}.md`);
   mkdirSync(outDir, { recursive: true });
-  writeFileSync(outFile, skillContent, 'utf-8');
+  writeFileSync(outFile, rendered, 'utf-8');
 
-  const result: SkillExportResult = { ok: true, target, path: outFile };
+  // 可选：--install 一键安装到 IDE skill 加载目录
+  if (options.install) {
+    const installDir = installDirFor(target);
+    const installFile = join(installDir, 'SKILL.md');
+    mkdirSync(installDir, { recursive: true });
+    writeFileSync(installFile, rendered, 'utf-8');
+    outFile = installFile;
+  }
+
+  const result: SkillExportResult = {
+    ok: true,
+    target,
+    path: outFile,
+    mode: target === 'codebuddy' ? 'full' : 'compact',
+  };
 
   if (options.json) {
     process.stdout.write(JSON.stringify(result, null, 2) + '\n');
   } else {
-    logger.info(`skill 已写入 ${outFile}`);
+    logger.info(`✓ skill (${target}) 已写入 ${outFile}`);
+    logger.info(`  mode: ${result.mode}`);
   }
-
   return result;
 }
 
-function generateSkillContent(target: SkillTarget): string {
-  const frontmatter = renderFrontmatter(target);
-  return `${frontmatter}
-# auto-test
+/**
+ * claude-code 版本：剥离 YAML frontmatter 中的 triggers 列表
+ * （claude-code 不识别 triggers 字段，保留会报 frontmatter 错误）
+ */
+function renderForClaudeCode(input: string): string {
+  // 匹配 YAML frontmatter（--- 开头到 --- 结束）
+  const fmMatch = input.match(/^---\n([\s\S]*?)\n---\n/);
+  if (!fmMatch) return input;
+  const fm = fmMatch[1]!;
+  const body = input.slice(fmMatch[0].length);
 
-面向 agent 的 Playwright 页面测试 CLI 工具：自然语言生成用例、可重跑、历史可追溯。
-
-## 子命令
-
-- ${SUBCOMMAND_CATALOG}
-
-${CALL_EXAMPLES}
-
-${OUTPUT_CONTRACT}
-
-${BEST_PRACTICES}
-`;
+  // 移除 triggers 段（description 保留，triggers 删掉）
+  const cleanedFm = fm.replace(/\ntriggers:\n(?:\s+-\s+.*\n?)+/g, '\n');
+  return `---\n${cleanedFm}\n---\n${body}`;
 }
 
-function renderFrontmatter(target: SkillTarget): string {
-  if (target === 'codebuddy') {
-    return `---
-name: auto-test
-description: |
-  Playwright 页面测试 CLI 工具。当用户需要测试 Web 页面、生成/重跑 Playwright
-  用例、查看测试历史、自动修复失败用例时调用。底层 pi-coding-agent + Playwright。
-triggers:
-  - 测试页面
-  - 生成 Playwright 用例
-  - 自动化测试
-  - 重跑失败测试
-  - 修复测试用例
-  - web 测试
----
-`;
-  }
-  return `---
-name: auto-test
-description: Playwright 页面测试 CLI 工具：自然语言生成用例、可重跑、历史可追溯。
----
-`;
+/**
+ * target 对应的 IDE skill 加载目录。
+ * - codebuddy：项目级 .codebuddy/skills/<name>/
+ * - claude-code：项目级 .claude/skills/<name>/
+ */
+function installDirFor(target: SkillTarget): string {
+  const name = 'auto-test';
+  if (target === 'codebuddy') return join(process.cwd(), '.codebuddy', 'skills', name);
+  return join(process.cwd(), '.claude', 'skills', name);
 }
