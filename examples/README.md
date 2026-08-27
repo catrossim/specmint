@@ -1,64 +1,59 @@
-# auto-test examples
+# auto-test 示例
 
-一组用于端到端冒烟验证的示例资源，无任何 npm 依赖。
+本目录展示真实项目接入 auto-test 的两种典型场景。所有示例都基于 v2 布局（`.auto-test/`）。
 
-## 文件清单
+## 场景 1：从零接入
 
-- `login-demo.html` — 简易登录页面（含 `data-testid` 锚点，便于稳定选择）
-- `dashboard.html` — 登录后跳转页
-- `serve.mjs` — Node.js 静态文件服务器（仅用标准库）
-- `login-flow.spec.ts` — 手写的高可读性 spec 范例（位于 examples/ 下，不会被 Playwright 自动加载）
+参见 [`e2e-verify.md`](./e2e-verify.md)：在任意项目中跑 `auto-test init` → `models select` → `generate` → `run` 的完整 6 步流程。
 
-## 启动 server
+## 场景 2：手动写用例
 
-```bash
-node examples/serve.mjs
-# → http://localhost:4000
+参考 `tests/login-admin.*`（已迁移到 `.auto-test/cases/login-admin.*`）的手写样例。
 
-# 自定义端口
-PORT=3000 node examples/serve.mjs
+## 目录约定（v2）
+
+```
+my-project/
+└── .auto-test/                     # 所有 auto-test 产物
+    ├── config.json                # 项目配置（不可改路径）├── playwright.config.ts       # Playwright 配置
+    ├── cases/                      # 用例库（递归支持 group/）
+    │   └── auth/login-success.spec.ts
+    ├── cases/pages/                # POM
+    ├── auth/                       # 登录态（阶段 2）
+    │   ├── admin.setup.ts
+    │   └── storage/admin.json
+    └── reports/                    # 运行产物（gitignore）
+        └── runs/<ts>/run.json
 ```
 
-## 端到端冒烟流程
+**项目根零污染**：auto-test 不会在项目根创建 `tests/`、`reports/`、`auto-test.config.json`、`playwright.config.ts`。
 
-详见 `e2e-verify.md`，覆盖 init → generate → run → rerun → history → heal → skill export 全链路。
+## 命令速查
 
-## 快速尝试手写用例
+| 类别 | 命令 |
+|------|------|
+| 初始化 | `auto-test init` |
+| 模型 | `auto-test models select` |
+| 生成用例 | `auto-test generate "<desc>" --priority P0` |
+| 列用例 | `auto-test list --priority P0 --auth admin` |
+| 详情 | `auto-test show auth/login-success` || 登录 | `auto-test auth init admin` / `auth refresh admin` / `auth list` |
+| 跑测 | `auto-test run --auth admin --priority P0` |
+| 重跑失败 | `auto-test rerun` |
+| 自愈 | `auto-test heal <name>` |
 
-```bash
-# 1. 启动 server
-node examples/serve.mjs &
+## 配置示例
 
-# 2. 设置 baseURL
-export AUTO_TEST_BASE_URL=http://localhost:4000
+`.auto-test/config.json`：
 
-# 3. 复制示例到用例库
-cp examples/login-flow.spec.ts tests/login-flow.spec.ts
-
-# 4. 运行
-auto-test run login-flow
+```json
+{
+  "agent": { "delegate": "sdk" },
+  "runner": { "defaultBrowser": "chromium" },
+  "auth": {
+    "headers": { "X-Tenant": "qa" },
+    "extraHTTPHeaders": { "Authorization": "Bearer ${AUTH_TOKEN}" },
+    "storageState": ".auto-test/auth/storage/default.json"
+  }
+}
 ```
 
-## 用 generate 生成新用例
-
-```bash
-# 探索模式（推荐，准确度更高）
-auto-test generate \
-  "登录：admin/admin123 登录成功跳转 dashboard，错误密码显示用户名或密码错误" \
-  --url http://localhost:4000/login-demo.html \
-  --name login-e2e
-
-# 纯描述模式
-auto-test generate "登录失败时显示用户名或密码错误" --name login-error-msg
-```
-
-## 清理
-
-```bash
-# 停止 server
-kill %1
-
-# 清理生成的产物
-rm -rf tests/*.spec.ts tests/*.meta.json tests/*.bak
-rm -rf reports/runs/*
-```

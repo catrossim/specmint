@@ -1,140 +1,196 @@
-# 端到端冒烟验证指南
+# 端到端接入示例（v2）
 
-本指南帮助用户在本地完整跑通 `generate → run → rerun → history → heal → skill export` 全链路。
+从零接入 auto-test 的完整 6 步流程。
 
-## 0. 前置条件
+## 前置条件
+
+- Node.js ≥ 18
+- 项目根目录（任意项目：SPA、SSR、微前端均可）
+
+## Step 1：初始化
 
 ```bash
-# 0.1 已完成项目初始化
-auto-test init
+cd my-project
+npx auto-test init
+```
 
-# 0.2 安装 npm 依赖
-npm install
+**输出**：
+```
+✓ 目录就绪（新建 7 个）
+✓ 写入 .auto-test/config.json
+✓ 写入 .auto-test/playwright.config.ts
+✓ 追加 .gitignore 条目
 
-# 0.3 安装 Playwright 浏览器（至少 chromium）
+下一步：
+  $ npm install
+  $ npx playwright install chromium
+  $ auto-test models select        # 选定 LLM provider/model
+  $ auto-test generate "<测试需求描述>" --priority P0
+```**项目根变化**：仅 `.gitignore` 多了 2 行（`.auto-test/reports/`、`.auto-test/.env`）。`auto-test.config.json`、`playwright.config.ts`、`tests/`、`reports/` 都不在项目根。
+
+## Step 2：装依赖
+
+```bash
+npm install --save-dev @playwright/test
 npx playwright install chromium
-
-# 0.4 编译（如用 dist/ 路径跑）
-npm run build
 ```
 
-**版本对齐提醒**：项目锁定 `@playwright/test@1.58.0` / `playwright@1.58.0`，对应 `chromium-1208`。如果你本地已装其他版本的 chromium，需要按对应版本重装（参考 README 的版本对应表）。浏览器缓存路径：
-- macOS：`~/Library/Caches/ms-playwright/`（注意不是 `~/.cache/...`）
-- Linux：`~/.cache/ms-playwright/`
-- Windows：`%LOCALAPPDATA%\ms-playwright\`
-
-开发态也可以直接用 tsx（无需编译）：
+## Step 3：选 LLM（首次必跑）
 
 ```bash
-npx tsx src/cli.ts <subcommand>
+auto-test models select
 ```
 
-## 1. 启动示例应用
+**交互式选择**（用序号 + 回车）：
+```
+选择 provider
+  1) anthropic
+  2) openai
+  3) google
+  ...
+  36) minimax-cn
+> 36
 
-```bash
-node examples/serve.mjs
-# → http://localhost:4000
+选择 model (provider: minimax-cn)
+  1) MiniMax-M2.7
+  2) MiniMax-M2.7-highspeed
+  3) MiniMax-M3
+> 3
+
+✓ 已写入 .auto-test/config.json：agent.model = "minimax-cn/MiniMax-M3"
 ```
 
-保持该终端打开，另开终端执行后续命令。
-
-## 2. 设置 baseURL
-
+**跳过交互**（CI 用）：
 ```bash
-export AUTO_TEST_BASE_URL=http://localhost:4000
+# 直接编辑 .auto-test/config.json 写 agent.model
 ```
 
-## 3. 用 generate 生成用例（探索模式）
+## Step 4：生成用例
 
 ```bash
-auto-test generate \
-  "登录：admin/admin123 登录成功跳转 dashboard，错误密码显示用户名或密码错误" \
-  --url http://localhost:4000/login-demo.html \
-  --name login-e2e \
-  --json
+auto-test generate "登录：admin/admin123，登录成功跳转 dashboard" --priority P0
 ```
 
-观察点：
-- 日志中打印 `tool_call: save_case(login-e2e)`
-- 生成 `tests/login-e2e.spec.ts` 与 `tests/login-e2e.meta.json`
-- JSON 输出含 `savedCase` 字段
-
-## 4. 运行用例
-
-```bash
-auto-test run login-e2e
+**生成产物**（`.auto-test/cases/login-success.meta.json`）：
+```json
+{
+  "name": "login-success",
+  "description": "登录：admin/admin123，登录成功跳转 dashboard",
+  "priority": "P0",
+  "group": "auth",
+  "module": "用户认证",
+  "linkedTickets": [],
+  "tags": ["smoke", "happy-path"],
+  ...
+}
 ```
 
-观察点：
-- Playwright 子进程输出测试结果
-- `reports/runs/<timestamp>/run.json` 被自动创建
-- `reports/runs/<timestamp>/trace.zip` 由 Playwright 自动写出
-- meta.json 的 `stats.lastStatus` 被更新为 `passed`
+**`--priority` 必填**：P0 冒烟、P1 重要、P2 次要、P3 低优。
 
-## 5. 查看历史
-
+**`--url` 探索**（可选）：
 ```bash
-auto-test history --json
+auto-test generate "完整购买流程" --url https://staging.example.com--priority P1
 ```
 
-观察点：
-- 输出含本次运行 runId
-- `totals.passed >= 1`、`status: passed`
-
-## 6. 制造失败 + rerun
+## Step 5：跑测（公开页场景）
 
 ```bash
-# 6.1 人为破坏用例（选择器漂移）
-sed -i.bak 's/data-testid="login-submit"/data-testid="login-submit-XX"/' \
-    tests/login-e2e.spec.ts
-
-# 6.2 再次运行，预期失败
-auto-test run login-e2e
-# → exitCode != 0
-
-# 6.3 一键重跑失败用例
-auto-test rerun
+auto-test run --no-auth
 ```
 
-观察点：
-- rerun 自动筛选最近一次失败，拼接 spec 文件名 pattern
-- 新的 runId，与原失败 run 区分开
+`--no-auth` 跳过 storageState（适合不需登录的页面）。
 
-## 7. heal 自动修复
+## Step 6：登录用例（auth 子系统）
+
+需要登录的页面走 auth 子系统：
+
+### 6.1 初始化 setup 模板
 
 ```bash
-auto-test heal login-e2e
+auto-test auth init admin
 ```
 
-观察点：
-- pi-agent 接收失败错误信息
-- 调用 `update_case` 工具覆盖 `tests/login-e2e.spec.ts`
-- 重跑应当通过
+**生成 `.auto-test/auth/admin.setup.ts`**：
+```typescript
+import { test as setup, expect } from '@playwright/test';
 
-## 8. skill export
+const STORAGE_STATE = '.auto-test/auth/storage/admin.json';
 
-```bash
-auto-test skill export --target codebuddy
-# → ./skills/auto-test/SKILL.md
+setup('admin login', async ({ page }) => {
+  // TODO: 填登录步骤
+  await page.context().storageState({ path: STORAGE_STATE });
+});
 ```
 
-把 `./skills/auto-test/SKILL.md` 加入 agent 的 skills 目录（如 `~/.codebuddy/skills/`），agent 即可自动发现并调用本工具的全部子命令。
+### 6.2 手写登录步骤
 
-## 9. 清理
+编辑 `.auto-test/auth/admin.setup.ts`：```typescript
+setup('admin login', async ({ page }) => {
+  await page.goto('/login');
+  await page.getByLabel('用户名').fill('admin');
+  await page.getByLabel('密码').fill(process.env.ADMIN_PASSWORD ?? 'admin123');
+  await page.getByRole('button', { name: '登录' }).click();
+  await expect(page).toHaveURL(/dashboard/);
+  await page.context().storageState({ path: STORAGE_STATE });
+});
+```
+
+### 6.3 刷新 storageState
 
 ```bash
-# 停止 server
-kill %1
+auto-test auth refresh admin
+```
 
-# 清理示例产物
-rm -rf tests/*.spec.ts tests/*.meta.json tests/*.bak
-rm -rf reports/runs/*
+输出：`.auto-test/auth/storage/admin.json`（gitignore 自动忽略）。
+
+### 6.4 用例关联 auth
+
+`.auto-test/cases/dashboard/overview.meta.json`：
+```json
+{
+  "name": "dashboard/overview",
+  "priority": "P0",
+  "auth": "admin",
+  ...
+}
+```
+
+### 6.5 跑 auth 关联用例
+
+```bash
+auto-test run --auth admin
+```
+
+自动：
+- 过滤 `meta.auth === "admin"` 的用例
+- 注入 storageState = `.auto-test/auth/storage/admin.json`
+- 跳过 setup project（已 refresh 过）
+
+## CI 集成
+
+```yaml
+# .github/workflows/e2e.yml
+- name: E2E
+  run: |
+    npx auto-test auth refresh admin    # 重新生成 storageState
+    npx auto-test run --priority P0      # 跑冒烟
+  env:
+    ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+    BASE_URL: ${{ vars.STAGING_URL }}
 ```
 
 ## 常见问题
 
-- **generate 报 "启动浏览器失败"**：未运行 `npx playwright install chromium`
-- **run 报 "Cannot find module './dist/runner/reporter.js'"**：未编译 `npm run build`（或用 tsx 跑开发态）
-- **rerun 报 "no failed tests"**：当前没有失败记录，先跑一次失败用例
-- **heal 报 "没有失败记录"**：先 `auto-test run` 制造一次失败
-- **pi-agent 报 AuthStorage 错**：配置 API Key（参见 pi-coding-agent 文档）
+**Q：项目根污染怎么办？**
+A：v2 后不存在——所有产物在 `.auto-test/`。老项目手动删 `tests/`、`reports/`、`auto-test.config.json`（项目根）。
+
+**Q：priority 必须是 P0-P3 吗？**
+A：是的。强约束避免 LLM 自由发挥污染冒烟集。如果想批量跑可省略 priority 但 generate 时必传。
+
+**Q：路径能改成 `e2e/` 吗？**
+A：不能。v2 强制 `.auto-test/`，避免配置漂移。
+
+**Q：需要多角色怎么办？**
+A：v2 阶段 2 默认单一角色。多角色场景先用一个角色跑完，再 refresh 切角色后跑。
+
+**Q：CI 怎么注入 token？**

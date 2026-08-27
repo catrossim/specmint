@@ -1,452 +1,363 @@
-# auto-test 使用说明
+# auto-test 使用文档（v2）
 
-中文使用手册，面向使用者。开发者信息见 [README.md](../README.md)，端到端冒烟流程见 [examples/e2e-verify.md](../examples/e2e-verify.md)。
+面向测试工程师的完整使用指南。
 
----
+## 1. 项目布局
 
-## 这是什么
+v2 强制所有产物在 `.auto-test/` 下，项目根**零污染**。
 
-`auto-test` 是一套面向 **AI agent** 的页面测试工具。底层用 [Playwright](https://playwright.dev/)，测试脚本由 LLM（默认对接本地 `pi-agent`）按你的描述直接生成。
-
-## 能做什么
-
-- **生成用例**：用中文描述业务场景 → 自动打开页面分析 DOM/可交互元素 → 生成可读性好的 Playwright 脚本
-- **运行用例**：单条跑、按 tag 跑、并行、headless/headed、UI 调试
-- **自动修复**：用例失败时，把错误信息喂给 LLM，让它自动改选择器/断言
-- **记录历史**：每次运行都落盘到 `reports/runs/<时间戳>/run.json`
-- **重跑**：一键重跑上次失败
-- **导出 skill**：把工具自身导出为 agent 可加载的 skill
-
----
-
-## 1. 安装（5 分钟）
-
-环境要求：Node.js 20+
-
-```bash
-# 1. 初始化项目（生成目录结构 + 默认配置）
-auto-test init
-
-# 2. 安装 npm 依赖
-npm install
-
-# 3. 安装 Playwright 浏览器
-npx playwright install chromium
+```
+my-project/
+├── .gitignore                         # init 追加 .auto-test/reports/ 等规则
+└── .auto-test/                         # auto-test 全部产物
+    ├── config.json                    # 项目配置（位置不可改）
+    ├── playwright.config.ts           # Playwright 配置（位置不可改）├── cases/                            # 用例库（递归支持 group/）
+    │   └── auth/login-success.spec.ts
+    │   └── auth/login-success.meta.json
+    ├── cases/pages/                    # POM
+    ├── auth/                           # 登录态子系统
+    │   ├── admin.setup.ts              # 登录流程
+    │   └── storage/admin.json          # storageState（gitignore）
+    └── reports/                        # 运行产物（gitignore）
+        └── runs/<ts>/run.json
 ```
 
-**版本对齐提醒**：本项目锁定 `@playwright/test@1.58.0` / `playwright@1.58.0`，对应 `chromium-1208`。如果你本地已装其他 Playwright 版本的浏览器，Playwright 启动时会报"Executable doesn't exist"，需要按版本重装：
+**为什么不能改路径**：
+- 减少决策成本（无需选择放在哪）
+- 避免配置漂移（团队内机器一致）
+- 项目根零污染（review 友好）
 
-| Playwright | chromium | headless_shell |
-|---|---|---|
-| 1.57.x | 1200 | 1200 |
-| **1.58.x（项目锁定）** | **1208** | **1208** |
-| 1.59.x | 1217 | 1217 |
-| 1.60.x | 1223 | 1223 |
-| 1.62.x | 1234 | 1234 |
+## 2. 配置（`.auto-test/config.json`）
 
-浏览器缓存路径：
-- macOS：`~/Library/Caches/ms-playwright/`（不是 `~/.cache/...`）
-- Linux：`~/.cache/ms-playwright/`
-- Windows：`%LOCALAPPDATA%\ms-playwright\`
+### 最小配置
 
----
-
-## 2. 快速开始（10 分钟跑通第一个用例）
-
-### 2.1 启动示例 server
-
-```bash
-node examples/serve.mjs
-# → http://localhost:4000
+```json
+{
+  "agent": { "model": "minimax-cn/MiniMax-M3", "delegate": "sdk" },
+  "runner": { "defaultBrowser": "chromium" }
+}
 ```
 
-保持终端打开，另开终端继续。
+`agent.model` 必填（用 `auto-test models select` 选，或手动从 pi-agent 复制）。
 
-### 2.2 设置 baseURL
-
-```bash
-export AUTO_TEST_BASE_URL=http://localhost:4000
-```
-
-### 2.3 用自然语言生成用例
-
-```bash
-auto-test generate \
-  "登录：admin/admin123 登录成功跳转 dashboard，错误密码显示用户名或密码错误" \
-  --url http://localhost:4000/login-demo.html \
-  --name login-demo
-```
-
-发生了什么：
-1. 打开浏览器访问 `--url` 指定页面
-2. 提取 a11y 树 + 可交互元素
-3. 把描述 + 页面快照喂给 LLM
-4. LLM 调用 `save_case` 工具生成 `tests/login-demo.spec.ts` + `tests/login-demo.meta.json`
-
-### 2.4 运行
-
-```bash
-auto-test run login-demo
-# ✓ 1 passed (Xs)
-```
-
-### 2.5 查看历史
-
-```bash
-auto-test history
-```
-
-输出示例：
-```
-2026-08-27 15:30:42  login-demo           ✓ passed   1.2s
-2026-08-27 14:00:11  login-flow           ✗ failed   3.4s
-```
-
----
-
-## 3. 子命令详解
-
-所有子命令都支持 `--json` 输出结构化结果（便于 agent 解析）。
-
-### 3.1 `auto-test init`
-
-初始化项目结构与默认配置。
-
-```bash
-auto-test init                # 已有配置时跳过
-auto-test init --force        # 强制覆盖
-auto-test init --json
-```
-
-生成：
-- `tests/` 用例目录
-- `tests/pages/` Page Object 目录
-- `reports/runs/` 运行历史
-- `auto-test.config.json` 默认配置
-- `playwright.config.ts`（若不存在）
-
-### 3.2 `auto-test generate <description>`
-
-根据描述生成测试用例。两种模式：
-
-**纯描述模式**（快，准确性中等）：
-```bash
-auto-test generate "登录失败时显示用户名或密码错误" --name login-error
-```
-
-**页面探索模式**（推荐，准确度高）：
-```bash
-auto-test generate \
-  "登录：admin/admin123 登录成功跳转 dashboard，错误密码显示用户名或密码错误" \
-  --url http://localhost:4000/login-demo.html \
-  --name login-flow
-```
-
-常用选项：
-- `-u, --url <url>`：启用页面探索模式
-- `-n, --name <name>`：用例名（kebab-case，必填或自动生成）
-- `--page-object`：同步生成 Page Object 文件
-- `--tag <tag>`：附加标签，可多次传入
-
-### 3.3 `auto-test run [pattern]`
-
-运行测试用例。
-
-```bash
-auto-test run                          # 跑 tests/ 下所有用例
-auto-test run login-flow               # 跑指定用例（kebab-case 自动补 .spec.ts）
-auto-test run login-*                  # glob 匹配标题
-auto-test run --browser firefox        # 指定浏览器
-auto-test run --headed                 # 有头模式（可见浏览器）
-auto-test run --ui                     # 打开 Playwright UI（交互调试）
-auto-test run --debug                  # 调试模式（断点）
-auto-test run --workers 4              # 并行 worker
-auto-test run --retries 2              # 失败重试
-auto-test run --grep "登录"            # 按标题过滤
-auto-test run --json                   # JSON 输出
-```
-
-退出码：
-- `0`：全部通过
-- `7`：存在失败用例
-
-### 3.4 `auto-test rerun`
-
-一键重跑最近一次失败的用例。
-
-```bash
-auto-test rerun                # 重跑最近一次失败
-auto-test rerun --from <id>    # 指定来源 run ID
-```
-
-工作流程：
-1. 读 `reports/runs/<id>/run.json` 找失败用例名
-2. 拼 `--grep` 过滤后跑一次
-
-### 3.5 `auto-test heal <name>`
-
-让 LLM 自动修复失败用例。
-
-```bash
-auto-test heal login-flow
-auto-test heal login-flow --from <runId>
-```
-
-工作流程：
-1. 读最近一次失败的错误信息
-2. 喂给 LLM（带原始 spec.ts + 失败日志）
-3. LLM 调用 `update_case` 工具覆盖原文件
-4. 修复后再跑一次验证
-
-### 3.6 `auto-test list`（别名 `ls`）
-
-列出所有用例。
-
-```bash
-auto-test list
-auto-test list --tag smoke
-auto-test list --json
-```
-
-输出列：name / status / tags / lastRunAt / duration。
-
-### 3.7 `auto-test history`
-
-查看运行历史。
-
-```bash
-auto-test history
-auto-test history --limit 20
-auto-test history --case login-flow     # 只看指定用例的历史
-auto-test history --json
-```
-
-每次运行的完整记录在 `reports/runs/<时间戳>/run.json`，包含：
-- 总览（totals、durationMs）
-- 每个 spec 的结果（status、duration、error、retry、stdout/stderr）
-- 附件路径（trace.zip、screenshots）
-
-### 3.8 `auto-test show <name>`
-
-查看用例详情。
-
-```bash
-auto-test show login-flow
-auto-test show login-flow --json
-```
-
-输出：name / createdAt / lastRunAt / stats / tags + spec 内容预览。
-
-### 3.9 `auto-test delete <name>`（别名 `rm`）
-
-删除用例。
-
-```bash
-auto-test delete login-flow          # 交互式确认
-auto-test delete login-flow --yes    # 跳过确认（脚本场景）
-```
-
-会同时删除 `tests/<name>.spec.ts` 和 `tests/<name>.meta.json`。
-
-### 3.10 `auto-test skill export`
-
-把工具自身导出为 agent 可加载的 skill。
-
-```bash
-auto-test skill export                          # 默认 codebuddy 格式
-auto-test skill export --target claude-code
-```
-
-输出位置：`./skills/auto-test/SKILL.md`。把这个目录拷到 agent 的 skills 目录（如 `~/.codebuddy/skills/`），agent 即可自动发现并调用本工具。
-
----
-
-## 4. 配置文件
-
-`auto-test.config.json`：
+### 完整配置（含 auth）
 
 ```json
 {
   "agent": {
-    "model": "minimax-cn",        // LLM 标识，格式 "provider/model" 或仅 "provider"
-    "delegate": "sdk",            // 当前仅支持 sdk
-    "systemPromptAdditions": ""   // 追加到 LLM 的系统提示
+    "model": "anthropic/claude-sonnet-latest",
+    "delegate": "sdk",
+    "systemPromptAdditions": ""
   },
   "explore": {
-    "enabledByDefault": false,    // generate 是否默认开启探索模式
-    "headless": true,             // 探索时浏览器是否 headless
-    "timeoutMs": 15000,           // 探索超时
-    "maxElements": 200,           // a11y 树最大节点数
+    "enabledByDefault": false,
+    "headless": true,
+    "timeoutMs": 15000,
+    "maxElements": 200,
     "waitUntil": "domcontentloaded"
   },
   "generation": {
     "selectorPolicy": {
-      "prefer": ["getByRole", "getByLabel", "getByPlaceholder", "getByTestId", "getByText"],
+      "prefer": ["getByRole", "getByLabel", "getByPlaceholder", "getByTestId"],
       "avoid": ["nth-child", "nth-of-type", "complex-css", "xpath"]
     },
-    "language": "zh",             // 生成代码注释 + 用例名 语言
-    "comments": "verbose",        // verbose | minimal | none
+    "language": "zh",
+    "comments": "verbose",
     "style": "page-object-optional"
   },
   "runner": {
-    "configPath": "./playwright.config.ts",
     "defaultBrowser": "chromium",
     "trace": "on-first-retry",
     "screenshot": "only-on-failure"
   },
-  "storage": {
-    "casesDir": "./tests",
-    "pageObjectsDir": "./tests/pages",
-    "reportsDir": "./reports"
+  "auth": {
+    "headers": { "X-Tenant": "qa" },
+    "extraHTTPHeaders": { "Authorization": "Bearer ${AUTH_TOKEN}" },
+    "cookies": [],
+    "storageState": ".auto-test/auth/storage/default.json"
   }
 }
 ```
 
-> **配置优先级**：CLI 参数 > 环境变量 > 配置文件 > 内置默认值。
+### 字段说明
 
-环境变量：
-- `AUTO_TEST_BASE_URL`：所有用例共享的 base URL（会注入到 `process.env.BASE_URL`，spec 中可用）
-- `AUTO_TEST_CONFIG`：配置文件路径（默认 `./auto-test.config.json`）
+| 字段 | 必填 | 说明 |
+|------|------|------|
+| `agent.model` | 否 | pi-agent model id。未设时自动选第一个 available。 |
+| `agent.delegate` | 否 | `sdk` \| `cli`，默认 `sdk` |
+| `runner.defaultBrowser` | 否 | `chromium` \| `firefox` \| `webkit` |
+| `auth.headers` | 否 | 注入到 Playwright `extraHTTPHeaders` |
+| `auth.extraHTTPHeaders` | 否 | 同 `headers`，两者合并 |
+| `auth.cookies` | 否 |cookie 列表（schema 预留，阶段 2 完整支持）
+| `auth.storageState` | 否 | Playwright `storageState` 路径 |
 
----
+## 3. 用例元数据
 
-## 5. 常见场景
+`.auto-test/cases/<group>/<name>.meta.json`：
 
-### 场景 1：从描述直接生成（无目标 URL）
-
-适合还没打开页面的场景，比如纯描述业务规则：
-
-```bash
-auto-test generate \
-  "购物车：加入 3 件商品后，结算按钮显示总价 ¥299" \
-  --name cart-total
+```json
+{
+  "name": "auth/login-success",
+  "description": "管理员登录成功跳转 dashboard",
+  "priority": "P0",
+  "group": "auth",
+  "module": "用户认证",
+  "linkedTickets": ["AUTH-101"],
+  "auth": "admin",
+  "tags": ["smoke", "happy-path"],
+  "createdAt": "2026-08-27T...",
+  "updatedAt": "2026-08-27T...",
+  ...
+}
 ```
 
-### 场景 2：批量脚本场景
+### 字段约束
 
-```bash
-# CI 中跑全部 smoke 用例
-auto-test run --tag smoke --json > result.json
-test $(jq '.totals.failed' result.json) -eq 0
+| 字段 | 必填 | 校验 |
+|------|------|------|
+| `name` | 是 | kebab-case，可含 `group/name` 形式 |
+| `priority`| **是** | enum `P0\|P1\|P2\|P3` |
+| `group` | 否 | kebab-case（物理子目录分组）|
+| `module` | 否 | 中文模块名 |
+| `linkedTickets` | 否 | 字符串数组 |
+| `auth` | 否 | 引用 `auth/<name>.setup.ts` 产物 |
+| `tags` | 否 | 小写 kebab-case 数组 |
+
+### 用例名分组
+
+物理分层（推荐用于 50+ 用例）：
+
+```
+.auto-test/cases/
+├── auth/
+│   ├── login-success.spec.ts
+│   └── login-invalid.spec.ts
+├── checkout/
+│   ├── cart-add.spec.ts
+│   └── payment-fail.spec.ts
+└── public/
+    └── homepage.spec.ts
 ```
 
-### 场景 3：选择器漂移 → heal 自动修
+用例名 = `auth/login-success`，PI 生成时 PI 自动推断 group + module。
 
-```bash
-# 1. 产品改版，选择器失效
-auto-test run login-flow
-# ✗ Test timeout exceeded: getByRole('button', { name: '登录' }) not found
+## 4. 命令清单
 
-# 2. 让 LLM 自动修
-auto-test heal login-flow
-# ✓ Spec updated. Re-running...
-# ✓ 1 passed
-
-# 3. 提交
-git diff tests/login-flow.spec.ts
-git add tests/login-flow.spec.ts tests/login-flow.meta.json
-git commit -m "chore: auto-heal login-flow after selector change"
+### 初始化```bash
+auto-test init                 # 创建 .auto-test/ 布局
+auto-test init --force         # 强制覆盖已存在的配置
 ```
 
-### 场景 4：让 agent 自动发现并使用工具
+### 模型选择
 
 ```bash
-auto-test skill export --target codebuddy
-cp -r ./skills/auto-test ~/.codebuddy/skills/
+auto-test models list                    # 列可用（已登录）
+auto-test models list --all             # 列全部（含未登录）
+auto-test models current                # 查看当前
+auto-test models select                 # 交互式选择
 ```
 
-之后 agent 看到 SKILL.md 后会自动知道 `auto-test generate ...` / `auto-test run ...` 的用法，可直接在对话中让 agent 帮你写。
+### 用例库
 
----
-
-## 6. 故障排查
-
-### Q1. generate 报 "启动浏览器失败"
-没装 chromium：
 ```bash
-npx playwright install chromium
+auto-test generate "<desc>" --priority P0           # 必传 priority
+auto-test generate "<desc>" --priority P1 --url https://example.com --page-object
+auto-test list [--tag X] [--priority P0,P1] [--auth admin]
+auto-test show auth/login-success
+auto-test delete auth/login-success
 ```
 
-### Q2. generate 报 "Executable doesn't exist at .../chromium-XXXX/chrome"
-本地装的 chromium 版本与 Playwright 不匹配。先看实际装的版本：
+### 登录态（auth 子系统）
+
 ```bash
-ls ~/Library/Caches/ms-playwright/   # macOS
+auto-test auth init admin               # 生成手写模板
+auto-test auth generate "<desc>" --name admin    # PI 生成
+auto-test auth refresh admin            # 重跑 setup →生成 storageState
+auto-test auth list                     # 列所有 setup + 状态
 ```
-按 Playwright 版本对应表选择正确的 Playwright 版本（见 §1），或直接装新版本：
+
+### 运行
+
 ```bash
-npm install playwright@1.58.0 @playwright/test@1.58.0 --save-exact
-npx playwright install chromium
+auto-test run                                    # 全部
+auto-test run auth                               # 用例名前缀
+auto-test run --priority P0                      # 冒烟
+auto-test run --auth admin                       # auth=admin 的用例
+auto-test run --header "X-Tenant=qa"             # 临时 header
+auto-test run --storage-state <path>             # 临时 storageState
+auto-test run --no-auth                          # 公开页
+auto-test rerun                                  # 重跑最近失败
+auto-test rerun --from <runId>                   # 指定 run
+auto-test history --limit 10                     # 历史
+auto-test heal auth/login-success                # 自愈
 ```
 
-### Q3. run 报 "Cannot find module './dist/runner/reporter.js'"
-没编译。两种方式：
+## 5. 鉴权注入（方式 C 详解）
+
+### 优先级链
+
+```
+CLI flag (--header / --storage-state / --no-auth)
+  ↓
+process.env (AUTO_TEST_HEADER_<KEY> /AUTO_TEST_STORAGE_STATE / AUTO_TEST_NO_AUTH / BASE_URL / AUTH_TOKEN)
+  ↓
+.auto-test/config.json 的 auth 段
+  ↓
+Playwright 默认值
+```
+
+### `${ENV_VAR}` 插值
+
+`auth` 段字段值支持 `${ENV_VAR}` 占位符（仅 auth 段允许，path 字段不允许）：
+
+```json
+{
+  "auth": {
+    "extraHTTPHeaders": {
+      "Authorization": "Bearer ${AUTH_TOKEN}"
+    }
+  }
+}
+```
+
+`process.env.AUTH_TOKEN` 未设时：**warning + 空串**（fail-fast 让 CI 立刻知道配置问题）。
+
+### CI 集成
+
+```yaml
+# .github/workflows/e2e.yml
+- name: E2E
+  run: |
+    npx auto-test auth refresh admin    # 重新生成 storageState
+    npx auto-test run --priority P0
+  env:
+    AUTH_TOKEN: ${{ secrets.STAGING_TOKEN }}
+    BASE_URL: ${{ vars.STAGING_URL }}
+```## 6. 登录态管理（auth 子系统）
+
+### 目录约定
+
+```
+.auto-test/auth/
+├── admin.setup.ts                # 登录流程（手写或 PI 生成）
+├── anonymous.setup.ts            # 访客态
+└── storage/
+    ├── admin.json                # setup 产物（gitignore）
+    └── anonymous.json
+```
+
+### 两种用法
+
+**手写**（最快上手）：
 ```bash
-npm run build                # 编译
-# 或开发态直接用 tsx：
-npx tsx src/cli.ts run ...
+auto-test auth init admin
+# 编辑 .auto-test/auth/admin.setup.ts
+auto-test auth refresh admin
 ```
 
-### Q4. rerun 报 "no failed tests"
-最近一次运行全部通过，先跑一次失败用例。
-
-### Q5. heal 报 "没有失败记录"
-要先有失败记录才能 heal：
+**PI 生成**：
 ```bash
-auto-test run login-flow    # 制造一次失败
-auto-test heal login-flow
+auto-test auth generate "管理员登录：admin/admin123，登录成功跳转 dashboard" --name admin
+auto-test auth refresh admin
 ```
 
-### Q6. pi-agent 报 "AuthStorage 错误"
-需要配置 API Key。本项目默认用 pi-agent 的 SDK：`@earendil-works/pi-coding-agent`，参见 [pi.dev SDK 文档](https://pi.dev/docs/latest/sdk)。
+### Playwright 自动配置
 
-### Q7. LLM 生成的用例断言写宽了导致 strict mode 失败
-这是 LLM 的常见小瑕疵，正好是 `heal` 的典型场景：
+`init` 渲染的 `.auto-test/playwright.config.ts` 自动拆 projects：```typescript
+projects: [
+  { name: 'auth-setup', testMatch: /\.setup\.ts$/, testDir: './auth' },
+  { name: 'e2e', testDir: './cases', dependencies: ['auth-setup'], use: { ... } }
+]
+```
+
+`auth-setup` project 在没有 `*.setup.ts` 时是空的，被 Playwright 跳过。写了 setup 文件即自动生效。
+
+### 用例关联 auth
+
+`meta.json` 加 `auth: "<name>"`：
+
+```json
+{ "name": "dashboard/overview", "priority": "P0", "auth": "admin" }
+```
+
+跑用例：
 ```bash
-auto-test heal <name>
+auto-test run --auth admin
 ```
 
-### Q8. tsx 报错 "__name is not defined"（页面探索）
-已知 tsx/esbuild 转译问题，已在 `src/agent/explore.ts` 中通过字符串形式 `page.evaluate` 规避。如果遇到，看下 `dist/` 是否过期：
-```bash
-npm run build
-```
+自动：
+1. 过滤 `meta.auth === "admin"` 的用例
+2. 注入 storageState = `.auto-test/auth/storage/admin.json`
 
-### Q9. 想看 trace / 截图
-```bash
-# run 时打开 trace
-auto-test run --ui    # 或 --debug
+## 7. PI 输出契约（generate）
 
-# 或在 config 中开启 trace: "on"
-# 跑完后：
-npx playwright show-trace reports/runs/<id>/trace.zip
-```
+`generate` 命令 prompt 里硬约束 LLM：- `priority` 必须用 enum（PI 不能改，由 CLI `--priority` 锁定）
+- `group` 必须是 kebab-case
+- `module` 用中文
+- `linkedTickets` 是字符串数组
+- `tags` 是小写 kebab-case
 
-### Q10. 想给 agent 用，但 agent 不识别
-确认 SKILL.md 在 agent 能发现的位置：
-- codebuddy：`~/.codebuddy/skills/auto-test/SKILL.md`
-- claude-code：`~/.claude/skills/auto-test/SKILL.md`
+LLLM 输出仍可能不规范，**归一化层兜底**（`src/utils/normalize-meta.ts`）：
+- `"高"` / `p0` / `"urgent"` / `"critical"` → `P0`
+- `"中"` / `"medium"` → `P2`
+- 其他不规范字段 → warning + 忽略（不阻塞保存）
 
-然后让 agent 重启或刷新。
+**严格校验**（落盘前 `src/utils/case-schema.ts`）：
+- `name` / `priority` 不合规 → throw（必填 + 强 enum）
+- `group` / `module` / `linkedTickets` / `tags` → warning + 跳过
 
----
+## 8. 退出码
 
-## 7. 文件位置速查
+| 码 | 含义 |
+|----|------|
+| 0 |成功 |
+| 2 (USAGE_ERROR) | 参数错误 |
+| 3 (NOT_IMPLEMENTED) | 子命令未实现 |
+| 4 (NOT_FOUND) | 资源不存在 |
+| 5 (ALREADY_EXISTS) | 重复创建 |
+| 6 (AGENT_ERROR) | PI 调用失败 |
+| 7 (TEST_FAILED) | 测试失败 |
+| 8 (IO_ERROR) | IO 错误 |
 
-| 内容 | 位置 |
-|---|---|
-| 用例脚本 | `tests/<name>.spec.ts` |
-| 用例元数据 | `tests/<name>.meta.json` |
-| Page Object | `tests/pages/<name>.ts` |
-| 配置文件 | `auto-test.config.json` |
-| Playwright 配置 | `playwright.config.ts` |
-| 运行历史（run 详情） | `reports/runs/<时间戳>/run.json` |
-| 运行附件（trace、截图） | `reports/runs/<时间戳>/*` |
-| Skill 导出产物 | `skills/auto-test/SKILL.md` |
+## 9. 常见问题
 
----
+### Q：路径能改成 `e2e/` 吗？
 
-## 8. 下一步
+**不能**。v2 强制 `.auto-test/`，避免配置漂移。
 
-- 端到端冒烟流程：[examples/e2e-verify.md](../examples/e2e-verify.md)
-- 架构与扩展：[README.md](../README.md)
-- 接入 agent：[skill export 命令](#310-auto-test-skill-export)
+### Q：priority 必须是 P0-P3 吗？
+
+是的。`generate --priority` 必填枚举。如果 PI 自由发挥会污染冒烟集。
+
+### Q：项目根污染怎么办？
+
+v2 后不存在。**老项目**手动删 `tests/`、`reports/`、`auto-test.config.json`（项目根），然后跑 `auto-test init` 重建。### Q：需要多角色怎么办？
+
+v2 默认单一角色。流程：
+1. 先用一个角色跑完所有用例
+2. `auto-test auth refresh <next-role>`
+3. 跑另一角色用例
+
+不同角色在不同测试批次切换，不并发。
+
+### Q：CI 怎么注入 token？
+
+`auth` 段写 `"Authorization": "Bearer ${AUTH_TOKEN}"`，CI 设 `AUTH_TOKEN` 环境变量即可。无需改代码。
+
+### Q：LLM 不可用怎么办？
+
+`auto-test models list` 看哪些 provider/model 已登录。未登录的 provider 需要在 pi-agent 里 `/login` 配置 API key。
+
+### Q：PI 生成的 priority 不对？
+
+强制约束在 `--priority` 锁定。如果发现 PI 输出 P1 但 CLI 传 P0，检查 `src/agent/tools.ts` 的 `save_case.execute`：应使用 `ctx.defaultPriority`。
+
+## 10. 升级指南（v1 → v2）
+
+1. 删项目根的 `auto-test.config.json` 和 `playwright.config.ts`
+2. 删项目根的 `tests/` 和 `reports/`（如有）
+3. 跑 `auto-test init` 重建 `.auto-test/` 布局
+4. 跑 `auto-test models select` 选 LLM
+5. 跑 `auto-test auth init <role>`（如需登录态）
+6. 跑 `auto-test generate "<desc>" --priority P0` 开始
+
