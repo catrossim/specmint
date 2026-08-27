@@ -1,0 +1,32 @@
+# 依赖
+node_modules/
+
+# 构建产物
+dist/
+*.tsbuildinfo
+
+# 运行日志
+*.log
+npm-debug.log*
+
+# 操作系统
+.DS_Store
+Thumbs.db
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+
+# IDE 内部数据（plans / 缓存），不入库
+.codebuddy/
+
+# auto-test 运行产物
+reports/runs/*/.tmp/
+playwright-report/
+test-results/
+
+# 环境变量
+.env
+.env.local
+.env.*.local

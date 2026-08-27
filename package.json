@@ -1,0 +1,49 @@
+{
+  "name": "auto-test",
+  "version": "0.1.0",
+  "description": "面向 agent 的 Playwright 页面测试 CLI 工具：自然语言生成用例、可重跑、历史可追溯",
+  "type": "module",
+  "bin": {
+    "auto-test": "./dist/cli.js"
+  },
+  "main": "./dist/cli.js",
+  "files": [
+    "dist",
+    "templates",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/cli.ts",
+    "start": "node dist/cli.js",
+    "init": "tsx src/cli.ts init",
+    "test": "tsx src/cli.ts run",
+    "test:headed": "tsx src/cli.ts run --headed",
+    "test:ui": "tsx src/cli.ts run --ui",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "^0.84.0",
+    "@playwright/test": "1.58.0",
+    "commander": "^15.0.0",
+    "playwright": "1.58.0",
+    "typebox": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.23.0",
+    "typescript": "^7.0.0"
+  },
+  "keywords": [
+    "playwright",
+    "testing",
+    "agent",
+    "e2e",
+    "ai",
+    "cli"
+  ],
+  "license": "MIT"
+}

@@ -1,0 +1,31 @@
+{
+  "name": "{{NAME}}",
+  "description": "{{DESCRIPTION}}",
+  "createdAt": "{{CREATED_AT}}",
+  "updatedAt": "{{CREATED_AT}}",
+  "tags": [],
+  "source": {
+    "type": "generated",
+    "input": ""
+  },
+  "generation": {
+    "mode": "description-only",
+    "model": "",
+    "exploredUrl": null,
+    "selectorPolicy": {
+      "prefer": ["getByRole", "getByLabel", "getByPlaceholder", "getByTestId", "getByText"],
+      "avoid": ["nth-child", "nth-of-type", "complex-css", "xpath"]
+    }
+  },
+  "pageObject": {
+    "enabled": false,
+    "file": null
+  },
+  "stats": {
+    "runCount": 0,
+    "lastStatus": "never",
+    "lastRunAt": null,
+    "lastRunId": null,
+    "averageDurationMs": 0
+  }
+}
