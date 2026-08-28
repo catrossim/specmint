@@ -15,7 +15,9 @@
 - **探索快照缓存**：相同 URL 的 a11y 快照落盘复用（默认 TTL 10 分钟），实测每次生成省 5–15s 浏览器启动
 - **CLI 强制归类**：`--module` / `--group` 一键锁定用例模块与分组，避免 PI 自由发挥污染目录
 - **按模块 / 分组过滤**：`list` 与 `list_cases` 支持 `--module` / `--group`，大型用例库检索更高效
-- **重跑与历史**：失败用例一键重跑，每次运行落盘到 `reports/runs/<ts>/run.json`，可追溯
+- **重跑与历史**：失败用例一键重跑，每次运行落盘到 `reports/runs/<batchId>/run.json`，可追溯
+- **批次号友好**：`run` 默认产物目录用 `YYYY-MM-DD_HHMMSS` 命名；加 `--label <slug>` 可拼成 `2026-08-27_150059-smoke`，一眼看出谁跑、什么时候跑
+- **test-results 按批次号组织**：Playwright 的 screenshots/videos/traces 全部落到 `.auto-test/reports/runs/<batchId>/artifacts/`，不再污染项目根
 - **可重入自愈**：`heal` 子命令把失败用例与日志委托给 pi-agent 自动修复
 - **面向 agent 友好**：所有命令支持 `--json` 输出，结构化错误，退出码语义清晰
 - **skill 一键导出**：`skill export` 生成 CodeBuddy / Claude Code 可加载的 SKILL.md
@@ -94,7 +96,7 @@ npx auto-test heal login-e2e
 |---|---|
 | `init` | 初始化项目结构与默认配置 |
 | `generate <description>` | 生成测试用例；支持 `--url` / `--module` / `--group` / `--priority` / `--no-explore-cache` / `--page-object` |
-| `run [pattern]` | 运行用例；透传 `--browser` / `--workers` / `--retries` / `--headed` / `--ui` / `--debug` / `--grep` |
+| `run [pattern]` | 运行用例；透传 `--browser` / `--workers` / `--retries` / `--headed` / `--ui` / `--debug` / `--grep` / `--label <slug>` |
 | `rerun [--from <runId>]` | 重跑最近一次（或指定）失败用例 |
 | `list [--tag <tag>] [--module <m>] [--group <g>]` | 列出用例库，支持按模块 / 分组过滤 |
 | `show <name>` | 查看用例详情（含 spec 与 POM 代码） |
@@ -254,7 +256,10 @@ src/
 
 ```
 generate  → CaseStore.save → tests/*.spec.ts + *.meta.json
-run       → spawn playwright test 子进程
+run       → HistoryStore.createRun → 生成 batchId (YYYY-MM-DD_HHMMSS[-<slug>])
+            → spawn playwright test 子进程（注入 AUTO_TEST_OUTPUT_DIR / AUTO_TEST_JSON_OUTPUT_FILE）
+              ├─ artifacts → .auto-test/reports/runs/<batchId>/artifacts/  (screenshots/videos/traces)
+              └─ results.json → .auto-test/reports/runs/<batchId>/results.json
             → reporter.onTestEnd → HistoryStore.appendResult + CaseStore.applyRunStats
             → reporter.onEnd → HistoryStore.finalizeRun
 rerun     → HistoryStore.getLatestFailedTestNames → runTests(pattern)
@@ -262,6 +267,39 @@ history   → HistoryStore.listRuns
 heal      → pi-agent.update_case → CaseStore.updateCode
 skill     → 写入 ./skills/auto-test/SKILL.md
 ```
+
+## 批次号与产物落点
+
+`run` 命令每次执行都会生成一个**批次号**（batchId）作为该次运行的唯一目录名：
+
+```
+YYYY-MM-DD_HHMMSS[-<slug>]
+```
+
+| 形态 | 示例 | 说明 |
+|------|------|------|
+| 默认 | `2026-08-27_150059` | 短、自带自然排序、shell 安全 |
+| 带 `--label` | `2026-08-27_150059-smoke` | 拼上 kebab-case 语义标签，便于一眼识别 |
+| 冲突 | `2026-08-27_150059-smoke-2` | 同批次号已存在时自动追加 `-2` / `-3` |
+
+每个批次号对应一个目录，里面整齐地放齐所有产物：
+
+```
+.auto-test/reports/runs/<batchId>/
+├── run.json                # auto-test 结构化历史（runId / label / cases / totals / results）
+├── results.json            # Playwright JSON reporter 输出
+└── artifacts/              # Playwright outputDir（screenshots / videos / traces）
+    └── <test-name>-.../
+```
+
+**子进程注入**：executor 在 spawn playwright CLI 时会注入两个环境变量：
+
+- `AUTO_TEST_OUTPUT_DIR` → `.auto-test/reports/runs/<batchId>/artifacts`
+- `AUTO_TEST_JSON_OUTPUT_FILE` → `.auto-test/reports/runs/<batchId>/results.json`
+
+`playwright.config.ts` 模板读这两个 env 决定 outputDir / JSON reporter 落点。即使 env 缺失，仍会回退到 `./test-results` / `./reports/runs/.tmp/results.json`，但**强烈建议**保持 env 注入启用，让 test-results 也待在 `.auto-test/` 内。
+
+**`--label` 校验**：kebab-case（`^[a-z][a-z0-9-]*[a-z0-9]$`），长度 1–32。合法示例：`smoke`、`p0-regression`、`nightly-batch-2`。
 
 ---
 
@@ -394,3 +432,45 @@ npx auto-test list --module 用户认证 --group auth --json
 - 完全向后兼容 v2：旧 `.auto-test/` 项目无需改动；首次运行会按需自动创建 `cache/` 子目录
 - 关闭缓存只需 `explore.cache.enabled = false` 或运行时加 `--no-explore-cache`
 - 升级前可删除 `.auto-test/cache/` 强制冷启动（不会影响用例与报告）
+
+---
+
+## v2.2 增量（2026-08）
+
+### 新增能力
+
+- **test-results 按批次号组织**：Playwright 的 `outputDir`（screenshots / videos / traces）现在指向 `.auto-test/reports/runs/<batchId>/artifacts/`，不再污染项目根
+- **批次号友好**：默认 `YYYY-MM-DD_HHMMSS`（如 `2026-08-27_150059`），自带自然排序、shell 安全
+- **可选 `--label <slug>`**：`auto-test run --label smoke` 拼成 `2026-08-27_150059-smoke`，一眼看出谁跑、什么时候跑
+- **JSON 报告不再中转**：`results.json` 直接落到 `<batchId>/results.json`，删除旧 `.tmp/` 间接层
+
+### 子进程 env 约定
+
+executor 在 spawn `playwright test` 前注入：
+
+| env | 值 |
+|-----|----|
+| `AUTO_TEST_OUTPUT_DIR` | `.auto-test/reports/runs/<batchId>/artifacts` |
+| `AUTO_TEST_JSON_OUTPUT_FILE` | `.auto-test/reports/runs/<batchId>/results.json` |
+
+`playwright.config.ts` 模板（`init` 生成）从这两个 env 决定 outputDir 和 JSON reporter 落点。
+
+### batchId 冲突处理
+
+同 batchId 已存在时自动追加 `-2` / `-3` …（最多 `-999`，再回退毫秒）。
+
+### CLI 增量
+
+```bash
+# 加语义标签：批次号 = 2026-08-27_150059-smoke
+npx auto-test run --priority P0 --label smoke
+
+# CI 跑 nightly 批次
+npx auto-test run --priority P0 --label nightly-batch-2
+```
+
+### 兼容说明
+
+- 完全向后兼容 v2.1：旧 `.auto-test/reports/runs/<ISO>/` 目录仍可读
+- 项目根遗留的 `test-results/` / `playwright-report/` 手动 `rm -rf` 清理一次即可
+- `playwright.config.ts` 模板升级：手动加入 `outputDir: process.env.AUTO_TEST_OUTPUT_DIR ?? './test-results'` 与 JSON reporter 同样从 env 读取

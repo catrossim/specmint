@@ -9,6 +9,12 @@
  * 兜底机制：
  * - 如果 reporter.onEnd 没机会执行（如子进程被 SIGKILL），run.json 仍可能是 status=running
  * - executor 退出前会检查并自动 finalize 为 status=error，确保 history 不留死链
+ *
+ * 批次产物落点（与子进程通过 env 约定）：
+ * - AUTO_TEST_OUTPUT_DIR=<reportsDir>/runs/<runId>/artifacts
+ *   Playwright outputDir：screenshots / videos / traces
+ * - AUTO_TEST_JSON_OUTPUT_FILE=<reportsDir>/runs/<runId>/results.json
+ *   Playwright JSON reporter 直接落盘到批次目录
  */
 import { spawn, type ChildProcess } from 'node:child_process';
 import { resolve } from 'node:path';
@@ -48,6 +54,12 @@ export interface RunOptions {
     storageState?: string;
     noAuth?: boolean;
   };
+  /**
+   * 批次语义标签（kebab-case slug）。
+   * 会拼到 runId 末尾：`YYYY-MM-DD_HHMMSS-<slug>`，便于人工识别。
+   * 由 CLI `--label` 传入；省略则只用时间戳。
+   */
+  label?: string;
 }
 
 export interface RunResult {
@@ -82,6 +94,7 @@ export async function runTests(options: RunOptions): Promise<RunResult> {
     pattern: options.pattern ?? null,
     command: commandArgv,
     config,
+    label: options.label,
   });
 
   logger.info(`run ${record.runId} 开始`);
@@ -97,6 +110,8 @@ export async function runTests(options: RunOptions): Promise<RunResult> {
       env: buildSpawnEnv({
         runId: record.runId,
         reportsDir: historyStore.root(),
+        artifactsDir: historyStore.artifactsDir(record.runId),
+        jsonReportPath: historyStore.jsonReportPath(record.runId),
         casesDirAbs: resolve(cwd, casesDir),
         auth: options.auth,
       }),
@@ -167,6 +182,8 @@ interface SpawnResult {
 /**
  * 构造子进程 env。
  * - AUTO_TEST_RUN_ID / REPORTS_DIR / CASES_DIR：auto-test 内部用
+ * - AUTO_TEST_OUTPUT_DIR=<dir>：Playwright outputDir（screenshots / videos / traces）
+ * - AUTO_TEST_JSON_OUTPUT_FILE=<path>：Playwright JSON reporter 输出文件
  * - AUTO_TEST_HEADER_<KEY>=V：注入 HTTP header（playwright.config.ts 展开为 extraHTTPHeaders）
  * - AUTO_TEST_STORAGE_STATE=<path>：覆盖 config.auth.storageState
  * - AUTO_TEST_NO_AUTH=1：跳过 storageState（公开页测试）
@@ -174,6 +191,8 @@ interface SpawnResult {
 function buildSpawnEnv(input: {
   runId: string;
   reportsDir: string;
+  artifactsDir: string;
+  jsonReportPath: string;
   casesDirAbs: string;
   auth?: RunOptions['auth'];
 }): NodeJS.ProcessEnv {
@@ -181,6 +200,8 @@ function buildSpawnEnv(input: {
     ...process.env,
     AUTO_TEST_RUN_ID: input.runId,
     AUTO_TEST_REPORTS_DIR: input.reportsDir,
+    AUTO_TEST_OUTPUT_DIR: input.artifactsDir,
+    AUTO_TEST_JSON_OUTPUT_FILE: input.jsonReportPath,
     AUTO_TEST_CASES_DIR: input.casesDirAbs,
   };
 

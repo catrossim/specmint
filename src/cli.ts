@@ -179,6 +179,10 @@ program
   .option('--storage-state <path>', '覆盖 config.auth.storageState（运行指定 storageState 文件）')
   .option('--no-auth', '跳过 storageState（公开页测试场景）')
   .option('--auth <name>', '按 auth 角色过滤用例（meta.auth === name）')
+  .option(
+    '--label <slug>',
+    '批次语义标签（kebab-case，1-32 字符），会拼到批次号末尾，例如 --label smoke → 2026-08-27_150059-smoke',
+  )
   .option('--json', '输出 JSON 格式')
   .action(runCommand);
 

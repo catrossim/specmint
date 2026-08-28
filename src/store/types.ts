@@ -198,6 +198,8 @@ export interface RunRecord {
   totals: RunTotals;
   results: TestResult[];
   config: RunConfigSnapshot;
+  /** 可选：批次语义标签（来自 CLI --label），与 runId 末段一致 */
+  label?: string;
   notes?: string;
 }
 

@@ -46,7 +46,7 @@ triggers:
 
 ### 运行
 
-- `run [pattern] [--browser] [--headed] [--workers N] [--grep] [--priority] [--auth <name>] [--header "K=V"] [--storage-state <path>] [--no-auth] [--ui] [--debug] [--json]`
+- `run [pattern] [--browser] [--headed] [--workers N] [--grep] [--priority] [--auth <name>] [--header "K=V"] [--storage-state <path>] [--no-auth] [--ui] [--debug] [--label <slug>] [--json]`
 - `rerun [--from <runId>]` — 重跑最近一次失败用例
 - `history [--limit N] [--case <name>]` — 运行历史
 - `heal <name> [--from <runId>]` — PI 自愈失败用例
@@ -95,6 +95,7 @@ auto-test run --priority P0           # 冒烟
 auto-test run --auth admin            # 仅 auth=admin 的用例
 auto-test run --header "X-Tenant=qa"  # 临时注入 header
 auto-test run --no-auth               # 公开页
+auto-test run --label smoke           # v2.2+ 加批次语义标签，批次号: 2026-08-27_150059-smoke
 
 # 9. CI 注入（推荐用 env）
 AUTH_TOKEN=$STAGING_TOKEN auto-test run --priority P0
@@ -166,6 +167,36 @@ Playwright 默认值
 ## 少样本示例库（v2.1+）
 
 `src/agent/templates/` 内联 4 套场景完整样例：`login-flow` / `form-submit` / `list-search` / `detail-page`。`prompts.ts::pickExample()` 按描述关键词自动挑选作为 few-shot 注入 system prompt，输出风格更稳。
+
+## 批次号与产物落点（v2.2+）
+
+`run` 每次执行生成一个**批次号**（batchId）作为该次运行目录名：
+
+```
+YYYY-MM-DD_HHMMSS[-<slug>]
+```
+
+| 形态 | 示例 | 说明 |
+|------|------|------|
+| 默认 | `2026-08-27_150059` | 自带自然排序、shell 安全 |
+| `--label <slug>` | `2026-08-27_150059-smoke` | 拼上 kebab-case 语义标签，便于识别 |
+| 冲突 | `2026-08-27_150059-smoke-2` | 同 batchId 已存在时自动追加 `-2` / `-3` … |
+
+**目录布局**：每次 `run` 在 `.auto-test/reports/runs/<batchId>/` 下产生三个产物：
+
+```
+.auto-test/reports/runs/<batchId>/
+├── run.json                # auto-test 结构化历史
+├── results.json            # Playwright JSON reporter 输出
+└── artifacts/              # Playwright outputDir（screenshots/videos/traces）
+```
+
+**子进程 env**：executor 在 spawn playwright CLI 前注入两个变量，`playwright.config.ts` 模板读它们决定 outputDir / JSON 落点：
+
+- `AUTO_TEST_OUTPUT_DIR` → `runs/<batchId>/artifacts`
+- `AUTO_TEST_JSON_OUTPUT_FILE` → `runs/<batchId>/results.json`
+
+**`--label` 校验**：kebab-case（`^[a-z][a-z0-9-]*[a-z0-9]$`），长度 1–32。`smoke` / `p0-regression` / `nightly-batch-2` 都是合法 slug。
 
 ## 输出约定
 

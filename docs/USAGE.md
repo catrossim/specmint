@@ -22,7 +22,10 @@ my-project/
     ├── cache/                          # v2.1+ 探索快照缓存（gitignore）
     │   └── explore/<hash>.json         # key = hash(URL + storageState)
     └── reports/                        # 运行产物（gitignore）
-        └── runs/<ts>/run.json
+        └── runs/<batchId>/             # 每次 run 一个独立批次目录
+            ├── run.json                # auto-test 结构化记录
+            ├── results.json            # Playwright JSON reporter 输出
+            └── artifacts/              # Playwright outputDir（screenshots/videos/traces）
 ```
 
 **为什么不能改路径**：
@@ -217,6 +220,7 @@ auto-test run --auth admin                       # auth=admin 的用例
 auto-test run --header "X-Tenant=qa"             # 临时 header
 auto-test run --storage-state <path>             # 临时 storageState
 auto-test run --no-auth                          # 公开页
+auto-test run --label smoke                      # 批次号尾部加语义标签：2026-08-27_150059-smoke
 auto-test rerun                                  # 重跑最近失败
 auto-test rerun --from <runId>                   # 指定 run
 auto-test history --limit 10                     # 历史
@@ -399,9 +403,73 @@ storageState 变化（例如切换 `auth/admin` → `auth/anonymous`）会自动
 4. 包含 "详情 / detail" → `detail-page`
 5. 兜底：`form-submit`
 
-样式更稳；用户可在 prompt 里强制走哪个场景，未来版本计划支持 `--example <name>` 显式指定。
+样式更稳；用户可用 `--example <name>` 显式指定走某个场景，`--no-example` 关闭注入。
 
-## 10. 退出码
+## 10. 批次号与产物落点
+
+`run` 命令每次执行都会生成一个**批次号**（batchId）作为该次运行的目录名。Playwright 的所有产物（screenshots / videos / traces）也按批次号组织，不再污染项目根。
+
+### batchId 格式
+
+```
+YYYY-MM-DD_HHMMSS[-<slug>]
+```
+
+| 形态 | 示例 | 说明 |
+|------|------|------|
+| 默认 | `2026-08-27_150059` | 短、自带自然排序、shell 安全 |
+| 带 `--label` | `2026-08-27_150059-smoke` | 拼上 kebab-case 语义标签，便于一眼识别 |
+| 冲突 | `2026-08-27_150059-smoke-2` | 同 batchId 已存在时自动追加 `-2` / `-3` … |
+
+### 目录布局
+
+每次 `run` 在 `.auto-test/reports/runs/<batchId>/` 下产生三个产物：
+
+```
+.auto-test/reports/runs/<batchId>/
+├── run.json                # auto-test 结构化历史（runId / label / cases / totals / results）
+├── results.json            # Playwright JSON reporter 输出
+└── artifacts/              # Playwright outputDir（screenshots / videos / traces）
+    └── <test-name>-.../
+```
+
+### 子进程 env 注入
+
+executor 在 spawn `playwright test` 前会注入两个环境变量：
+
+| env | 值 |
+|-----|----|
+| `AUTO_TEST_OUTPUT_DIR` | `.auto-test/reports/runs/<batchId>/artifacts` |
+| `AUTO_TEST_JSON_OUTPUT_FILE` | `.auto-test/reports/runs/<batchId>/results.json` |
+
+`playwright.config.ts` 模板（`init` 生成）从这两个 env 决定 outputDir 和 JSON reporter 的输出位置。env 缺失时回退到 `./test-results` / `./reports/runs/.tmp/results.json`（不推荐，会污染项目根）。
+
+### `--label` 校验
+
+- kebab-case：`^[a-z][a-z0-9-]*[a-z0-9]$`
+- 长度 1–32
+- 合法示例：`smoke`、`p0-regression`、`nightly-batch-2`
+- 非法示例：`Smoke`（大写）、`-smoke`（开头 `-`）、`smoke-`（结尾 `-`）、`smoke--batch`（连续 `-`）
+
+### 历史查看
+
+```bash
+auto-test history --limit 5
+# batchId              label    status    totals           startedAt
+# 2026-08-27_150059    smoke    passed    12/12 (1.5s)    2026-08-27T15:00:59Z
+# 2026-08-27_142301    p0       failed    3/5 (8.2s)      2026-08-27T14:23:01Z
+# ...
+```
+
+按 batchId 排序（字典序），所以日期从早到晚自然展开。
+
+### 何时该清理 `.auto-test/reports/runs/`
+
+- 旧 run 已不再需要（参考 `history --limit N`）
+- 磁盘吃紧
+- CI 流水线可在每次 pipeline 起点 `rm -rf .auto-test/reports/runs/*` 强制冷启动
+
+## 11. 退出码
 
 | 码 | 含义 |
 |----|------|
@@ -414,7 +482,7 @@ storageState 变化（例如切换 `auth/admin` → `auth/anonymous`）会自动
 | 7 (TEST_FAILED) | 测试失败 |
 | 8 (IO_ERROR) | IO 错误 |
 
-## 11. 常见问题
+## 12. 常见问题
 
 ### Q：路径能改成 `e2e/` 吗？
 
@@ -467,7 +535,7 @@ auto-test generate "登录失败提示" --priority P1 --group auth --module 用�
 - 单次：`auto-test generate ... --no-explore-cache`
 - 物理：`rm -rf .auto-test/cache/explore/`
 
-## 12. 升级指南
+## 13. 升级指南
 
 ### v1 → v2
 
@@ -485,3 +553,14 @@ auto-test generate "登录失败提示" --priority P1 --group auth --module 用�
 - 首次运行会自动创建 `.auto-test/cache/`
 - 旧项目无 `explore.cache` 配置时取默认值（启用、TTL 10 分钟）
 - 想强制冷启动：`rm -rf .auto-test/cache/`
+
+### v2.1 → v2.2（批次号与产物落点）
+
+完全向后兼容。Playwright 产物（screenshots / videos / traces / JSON 报告）现在按批次号落在 `.auto-test/reports/runs/<batchId>/artifacts/` 和 `<batchId>/results.json`，不再写到项目根的 `test-results/`。
+
+升级步骤：
+
+1. **用户项目**的 `.gitignore` 里 `.auto-test/reports/runs/` 会覆盖之前的 `.auto-test/reports/runs/*/.tmp/`，如果之前手写过旧规则可以删除
+2. **用户项目**的 `playwright.config.ts`（在 `.auto-test/` 下）会被 `init` 重新生成；如已自改，请手动加入 `outputDir: process.env.AUTO_TEST_OUTPUT_DIR ?? './test-results'` 与 `outputFile: process.env.AUTO_TEST_JSON_OUTPUT_FILE`
+3. 如果之前项目根有遗留的 `test-results/` / `playwright-report/`，手动 `rm -rf` 清理一次即可
+4. 旧的 `.auto-test/reports/runs/<ISO 时间戳>/` 目录仍然可用（路径格式升级为 `YYYY-MM-DD_HHMMSS` 但目录布局兼容）

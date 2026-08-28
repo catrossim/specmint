@@ -22,6 +22,8 @@ export interface RunOptions {
   /** CLI --no-auth */
   noAuth?: boolean;
   json?: boolean;
+  /** CLI --label <slug>：批次语义标签 */
+  label?: string;
 }
 
 export async function runCommand(
@@ -101,6 +103,7 @@ export async function runCommand(
       storageState: options.storageState,
       noAuth: options.noAuth === true,
     },
+    label: options.label,
   });
 
   if (options.json) {

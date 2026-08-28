@@ -4,15 +4,17 @@
  * 目录布局：
  *   <reportsDir>/
  *     runs/
- *       <runId>/
- *         run.json
- *         trace.zip            (由 @playwright/test reporter 写出)
- *         test-results/        (失败用例附件，由 Playwright 自动产出)
+ *       <batchId>/
+ *         run.json              # auto-test 结构化记录
+ *         results.json          # Playwright JSON reporter 输出
+ *         artifacts/            # Playwright outputDir：screenshots / videos / traces
  *
  * 设计原则：
  * - append-only：createRun 后由 reporter 反复 appendResult，整体重写 run.json
  * - 单进程假设：不做文件锁；如需多进程并发跑回退到 CI 串行或加锁层
- * - runId = ISO 时间戳替换分隔符（人类可读 + 自然排序）
+ * - batchId 格式：`YYYY-MM-DD_HHMMSS[-<slug>]`，人类可读 + 自然排序
+ *   - 默认仅时间戳；同名 slug 由 caller 传入（CLI `--label`）
+ *   - 同 batchId 已存在时自动追加 `-2` / `-3` …
  */
 import {
   existsSync,
@@ -46,6 +48,12 @@ export interface CreateRunInput {
   command: string;
   config: RunConfigSnapshot;
   notes?: string;
+  /**
+   * 用户友好的批次描述（kebab-case slug）。
+   * 会拼到 batchId 末尾，形成 `YYYY-MM-DD_HHMMSS-<slug>`。
+   * 由 CLI `--label <slug>` 传入；省略则只用时间戳。
+   */
+  label?: string;
 }
 
 export class HistoryStore {
@@ -67,6 +75,22 @@ export class HistoryStore {
     return join(this.runDir(runId), 'run.json');
   }
 
+  /**
+   * Playwright outputDir 路径（screenshots / videos / traces）。
+   * 子进程通过 AUTO_TEST_OUTPUT_DIR 环境变量读取。
+   */
+  artifactsDir(runId: string): string {
+    return join(this.runDir(runId), 'artifacts');
+  }
+
+  /**
+   * Playwright JSON reporter 输出文件路径。
+   * 子进程通过 AUTO_TEST_JSON_OUTPUT_FILE 环境变量读取。
+   */
+  jsonReportPath(runId: string): string {
+    return join(this.runDir(runId), 'results.json');
+  }
+
   root(): string {
     return this.reportsDir;
   }
@@ -75,9 +99,16 @@ export class HistoryStore {
 
   /**
    * 创建运行记录。生成 runId + 建目录 + 写初始 run.json。
+   *
+   * - runId = `YYYY-MM-DD_HHMMSS[-<slug>]`，人类可读 + 自然排序
+   * - slug 可选，由 caller 传入（CLI `--label`）
+   * - 同 runId 已存在时自动追加 `-2` / `-3` …
    */
   createRun(input: CreateRunInput): RunRecord {
-    const runId = generateRunId();
+    if (input.label !== undefined) {
+      validateLabel(input.label);
+    }
+    const runId = generateBatchId(this.reportsDir, input.label);
     const record: RunRecord = {
       runId,
       startedAt: new Date().toISOString(),
@@ -88,12 +119,14 @@ export class HistoryStore {
       totals: emptyTotals(),
       results: [],
       config: input.config,
+      ...(input.label !== undefined ? { label: input.label } : {}),
       ...(input.notes ? { notes: input.notes } : {}),
     };
 
     try {
       const dir = this.runDir(runId);
       ensureDir(dir);
+      ensureDir(this.artifactsDir(runId));
       writeFileSync(this.runJsonPath(runId), JSON.stringify(record, null, 2) + '\n', 'utf-8');
     } catch (err) {
       throw new CliError({
@@ -254,9 +287,60 @@ export class HistoryStore {
 
 // --- helpers ---
 
-function generateRunId(): string {
-  // 把 ISO 时间戳的 : . 替换为 -，人类可读且自然排序
-  return new Date().toISOString().replace(/[:.]/g, '-');
+/**
+ * 生成人类友好的批次号（runId）。
+ *
+ * - 默认格式：`YYYY-MM-DD_HHMMSS`（如 `2026-08-27_150059`），自排序 + shell 安全
+ * - 带 label：`YYYY-MM-DD_HHMMSS-<slug>`（如 `2026-08-27_150059-smoke`）
+ * - 冲突处理：若 `runs/<id>/` 已存在，追加 `-2`、`-3` …
+ */
+function generateBatchId(reportsDir: string, label?: string): string {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const base =
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+    `_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+  const candidate = label ? `${base}-${label}` : base;
+
+  const runsDir = join(reportsDir, 'runs');
+  if (!existsSync(runsDir)) return candidate;
+  if (!existsSync(join(runsDir, candidate))) return candidate;
+
+  // 冲突：追加 -2 / -3 ...
+  for (let i = 2; i < 1000; i++) {
+    const next = `${candidate}-${i}`;
+    if (!existsSync(join(runsDir, next))) return next;
+  }
+  // 极端兜底：加上毫秒
+  return `${candidate}-${d.getMilliseconds()}`;
+}
+
+/**
+ * 校验 label slug：
+ * - kebab-case：`^[a-z0-9]+(?:-[a-z0-9]+)*$`（段间单 `-`，不允许连续 / 收尾 `-`）
+ * - 长度 1–32
+ * - 合法示例：`smoke` / `p0-regression` / `nightly-batch-2`
+ * - 非法示例：`Smoke` / `-smoke` / `smoke-` / `smoke--batch`
+ */
+export function validateLabel(label: string): void {
+  if (typeof label !== 'string' || label.length === 0) {
+    throw new CliError({
+      code: ExitCode.USAGE_ERROR,
+      message: '--label 不能为空',
+    });
+  }
+  if (label.length > 32) {
+    throw new CliError({
+      code: ExitCode.USAGE_ERROR,
+      message: `--label 过长（${label.length} > 32 字符）`,
+    });
+  }
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(label)) {
+    throw new CliError({
+      code: ExitCode.USAGE_ERROR,
+      message: `--label 格式不合法（须为 kebab-case，如 "smoke" / "p0-regression"）：${label}`,
+    });
+  }
 }
 
 function emptyTotals(): RunTotals {

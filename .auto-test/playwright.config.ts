@@ -78,8 +78,17 @@ export default defineConfig({
     },
   ],
   timeout: 30_000,
+  /**
+   * 批次产物落点（由 executor 注入；缺失时回退到项目根的 Playwright 默认）：
+   * - AUTO_TEST_OUTPUT_DIR：screenshots / videos / traces 输出目录
+   * - AUTO_TEST_JSON_OUTPUT_FILE：JSON reporter 输出文件
+   *
+   * executor 把它们指向 `.auto-test/reports/runs/<batchId>/artifacts` 和
+   * `.auto-test/reports/runs/<batchId>/results.json`，实现"按批次号组织"。
+   */
+  outputDir: process.env.AUTO_TEST_OUTPUT_DIR ?? './test-results',
   reporter: [
     ['list'],
-    ['json', { outputFile: './reports/runs/.tmp/results.json' }],
+    ['json', { outputFile: process.env.AUTO_TEST_JSON_OUTPUT_FILE ?? './reports/runs/.tmp/results.json' }],
   ],
 });
