@@ -1,6 +1,6 @@
-# auto-test
-.auto-test/reports/runs/
-.auto-test/.env
-.auto-test/cache/
+# specmint
+.specmint/reports/runs/
+.specmint/.env
+.specmint/cache/
 test-results/
 playwright-report/

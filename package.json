@@ -1,16 +1,18 @@
 {
-  "name": "auto-test",
+  "name": "specmint",
   "version": "0.1.0",
   "description": "面向 agent 的 Playwright 页面测试 CLI 工具：自然语言生成用例、可重跑、历史可追溯",
   "type": "module",
   "bin": {
-    "auto-test": "./dist/cli.js"
+    "specmint": "./dist/cli.js"
   },
   "main": "./dist/cli.js",
   "files": [
     "dist",
     "templates",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
   ],
   "scripts": {
     "build": "tsc && chmod +x dist/cli.js",
@@ -45,5 +47,14 @@
     "ai",
     "cli"
   ],
-  "license": "MIT"
+  "author": "specmint contributors",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/catrossim/specmint.git"
+  },
+  "homepage": "https://github.com/catrossim/specmint#readme",
+  "bugs": {
+    "url": "https://github.com/catrossim/specmint/issues"
+  }
 }

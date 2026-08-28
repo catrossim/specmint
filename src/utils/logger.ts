@@ -3,7 +3,7 @@
  *
  * 设计原则：
  * - 默认写 stderr，便于与 `--json` 输出（stdout）分离
- * - 级别可通过环境变量 `AUTO_TEST_LOG` 控制：`debug` | `info` | `warn` | `error`
+ * - 级别可通过环境变量 `SPECMINT_LOG` 控制：`debug` | `info` | `warn` | `error`
  * - 提供 `setJsonMode()` 切换到结构化输出，便于后续接入
  */
 type Level = 'debug' | 'info' | 'warn' | 'error';
@@ -15,7 +15,7 @@ class Logger {
   private jsonMode = false;
 
   constructor() {
-    const envLevel = (process.env.AUTO_TEST_LOG ?? 'info').toLowerCase() as Level;
+    const envLevel = (process.env.SPECMINT_LOG ?? 'info').toLowerCase() as Level;
     this.threshold = LEVELS[envLevel] ?? LEVELS.info;
   }
 

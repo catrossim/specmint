@@ -1,15 +1,15 @@
-# auto-test 使用文档（v2.1）
+# specmint 使用文档（v2.1）
 
 面向测试工程师的完整使用指南。
 
 ## 1. 项目布局
 
-v2 强制所有产物在 `.auto-test/` 下，项目根**零污染**。
+v2 强制所有产物在 `.specmint/` 下，项目根**零污染**。
 
 ```
 my-project/
-├── .gitignore                         # init 追加 .auto-test/reports/ 等规则
-└── .auto-test/                         # auto-test 全部产物
+├── .gitignore                         # init 追加 .specmint/reports/ 等规则
+└── .specmint/                         # specmint 全部产物
     ├── config.json                    # 项目配置（位置不可改）
     ├── cases/                          # 用例库（递归支持 group/）
     │   ├── auth/login-success.spec.ts
@@ -21,11 +21,11 @@ my-project/
     │   └── explore/<hash>.json         # key = hash(URL + storageState)
     └── reports/                        # 运行产物（gitignore）
         └── runs/<batchId>/             # 每次 run 一个独立批次目录
-            ├── run.json                # auto-test 结构化记录
+            ├── run.json                # specmint 结构化记录
             ├── results.json            # Playwright JSON reporter 输出
             └── artifacts/              # Playwright outputDir（screenshots/videos/traces）
 
-> **包内配置接管（v2.2+）**：Playwright 配置不再生成于用户项目，统一在 `dist/runner/playwright.config.{js,ts}` 内由 auto-test 自带。`.auto-test/` 仅保留用户资产。深度自定义走 `auto-test run --config <path>`。
+> **包内配置接管（v2.2+）**：Playwright 配置不再生成于用户项目，统一在 `dist/runner/playwright.config.{js,ts}` 内由 specmint 自带。`.specmint/` 仅保留用户资产。深度自定义走 `specmint run --config <path>`。
 ```
 
 **为什么不能改路径**：
@@ -33,7 +33,7 @@ my-project/
 - 避免配置漂移（团队内机器一致）
 - 项目根零污染（review 友好）
 
-## 2. 配置（`.auto-test/config.json`）
+## 2. 配置（`.specmint/config.json`）
 
 ### 最小配置
 
@@ -44,7 +44,7 @@ my-project/
 }
 ```
 
-`agent.model` 必填（用 `auto-test models select` 选，或手动从 pi-agent 复制）。
+`agent.model` 必填（用 `specmint models select` 选，或手动从 pi-agent 复制）。
 
 ### 完整配置（含 v2.1 缓存）
 
@@ -64,7 +64,7 @@ my-project/
     "cache": {
       "enabled": true,
       "ttlMs": 600000,
-      "dir": ".auto-test/cache/explore"
+      "dir": ".specmint/cache/explore"
     }
   },
   "generation": {
@@ -87,7 +87,7 @@ my-project/
     "headers": { "X-Tenant": "qa" },
     "extraHTTPHeaders": { "Authorization": "Bearer ${AUTH_TOKEN}" },
     "cookies": [],
-    "storageState": ".auto-test/auth/storage/default.json"
+    "storageState": ".specmint/auth/storage/default.json"
   }
 }
 ```
@@ -103,18 +103,18 @@ my-project/
 | `runner.screenshot` | 否 | `only-on-failure`（默认）/ `on` / `off` |
 | `runner.timeoutMs` | 否 | 单用例超时（毫秒），默认 `30000` |
 | `runner.browserChannel` | 否 | `auto`（默认，chromium→chrome→msedge 自动回退）/ `chromium` / `chrome` / `msedge` —— 解决内网无法下载 chromium |
-| `runner.baseURL` | 否 | 被测目标 baseURL，注入到 Playwright `use.baseURL`。支持 `${ENV_VAR}` 展开。env 优先于本字段（`BASE_URL` / `AUTO_TEST_BASE_URL` > `runner.baseURL` > `http://localhost:3000`） |
+| `runner.baseURL` | 否 | 被测目标 baseURL，注入到 Playwright `use.baseURL`。支持 `${ENV_VAR}` 展开。env 优先于本字段（`BASE_URL` / `SPECMINT_BASE_URL` > `runner.baseURL` > `http://localhost:3000`） |
 | `auth.headers` | 否 | 注入到 Playwright `extraHTTPHeaders` |
 | `auth.extraHTTPHeaders` | 否 | 同 `headers`，两者合并 |
 | `auth.cookies` | 否 | cookie 列表（schema 预留，阶段 2 完整支持） |
 | `auth.storageState` | 否 | Playwright `storageState` 路径 |
 | `explore.cache.enabled` | 否 | 是否启用探索快照缓存，默认 `true` |
 | `explore.cache.ttlMs` | 否 | 快照有效期（毫秒），默认 `600000`（10 分钟） |
-| `explore.cache.dir` | 否 | 缓存目录，相对 `.auto-test/` 解析 |
+| `explore.cache.dir` | 否 | 缓存目录，相对 `.specmint/` 解析 |
 
 ## 3. 用例元数据
 
-`.auto-test/cases/<group>/<name>.meta.json`：
+`.specmint/cases/<group>/<name>.meta.json`：
 
 ```json
 {
@@ -149,7 +149,7 @@ my-project/
 物理分层（推荐用于 50+ 用例）：
 
 ```
-.auto-test/cases/
+.specmint/cases/
 ├── auth/
 │   ├── login-success.spec.ts
 │   └── login-invalid.spec.ts
@@ -167,7 +167,7 @@ my-project/
 如果 PI 推断的 `group` / `module` 不符合期望，generate 命令支持直接锁定：
 
 ```bash
-auto-test generate "登录失败提示" --priority P1 \
+specmint generate "登录失败提示" --priority P1 \
   --group auth --module 用户认证
 ```
 
@@ -178,60 +178,60 @@ auto-test generate "登录失败提示" --priority P1 \
 ### 初始化
 
 ```bash
-auto-test init                 # 创建 .auto-test/ 布局
-auto-test init --force         # 强制覆盖已存在的配置
+specmint init                 # 创建 .specmint/ 布局
+specmint init --force         # 强制覆盖已存在的配置
 ```
 
 ### 模型选择
 
 ```bash
-auto-test models list                    # 列可用（已登录）
-auto-test models list --all              # 列全部（含未登录）
-auto-test models current                 # 查看当前
-auto-test models select                  # 交互式选择
+specmint models list                    # 列可用（已登录）
+specmint models list --all              # 列全部（含未登录）
+specmint models current                 # 查看当前
+specmint models select                  # 交互式选择
 ```
 
 ### 用例库
 
 ```bash
 # 生成（v2.1 增加 --module / --group / --no-explore-cache）
-auto-test generate "<desc>" --priority P0
-auto-test generate "<desc>" --priority P1 --url https://example.com --page-object
-auto-test generate "<desc>" --priority P0 --module 用户认证 --group auth
-auto-test generate "<desc>" --priority P0 --no-explore-cache   # 强制刷新探索快照
+specmint generate "<desc>" --priority P0
+specmint generate "<desc>" --priority P1 --url https://example.com --page-object
+specmint generate "<desc>" --priority P0 --module 用户认证 --group auth
+specmint generate "<desc>" --priority P0 --no-explore-cache   # 强制刷新探索快照
 
 # 列表（v2.1 增加 --module / --group）
-auto-test list [--tag X] [--priority P0,P1] [--auth admin]
-auto-test list --module 用户认证 --group auth --json
+specmint list [--tag X] [--priority P0,P1] [--auth admin]
+specmint list --module 用户认证 --group auth --json
 
-auto-test show auth/login-success
-auto-test delete auth/login-success
+specmint show auth/login-success
+specmint delete auth/login-success
 ```
 
 ### 登录态（auth 子系统）
 
 ```bash
-auto-test auth init admin               # 生成手写模板
-auto-test auth generate "<desc>" --name admin    # PI 生成
-auto-test auth refresh admin            # 重跑 setup → 生成 storageState
-auto-test auth list                     # 列所有 setup + 状态
+specmint auth init admin               # 生成手写模板
+specmint auth generate "<desc>" --name admin    # PI 生成
+specmint auth refresh admin            # 重跑 setup → 生成 storageState
+specmint auth list                     # 列所有 setup + 状态
 ```
 
 ### 运行
 
 ```bash
-auto-test run                                    # 全部
-auto-test run auth                               # 用例名前缀
-auto-test run --priority P0                      # 冒烟
-auto-test run --auth admin                       # auth=admin 的用例
-auto-test run --header "X-Tenant=qa"             # 临时 header
-auto-test run --storage-state <path>             # 临时 storageState
-auto-test run --no-auth                          # 公开页
-auto-test run --label smoke                      # 批次号尾部加语义标签：2026-08-27_150059-smoke
-auto-test rerun                                  # 重跑最近失败
-auto-test rerun --from <runId>                   # 指定 run
-auto-test history --limit 10                     # 历史
-auto-test heal auth/login-success                # 自愈
+specmint run                                    # 全部
+specmint run auth                               # 用例名前缀
+specmint run --priority P0                      # 冒烟
+specmint run --auth admin                       # auth=admin 的用例
+specmint run --header "X-Tenant=qa"             # 临时 header
+specmint run --storage-state <path>             # 临时 storageState
+specmint run --no-auth                          # 公开页
+specmint run --label smoke                      # 批次号尾部加语义标签：2026-08-27_150059-smoke
+specmint rerun                                  # 重跑最近失败
+specmint rerun --from <runId>                   # 指定 run
+specmint history --limit 10                     # 历史
+specmint heal auth/login-success                # 自愈
 ```
 
 ## 5. 鉴权注入（方式 C 详解）
@@ -241,9 +241,9 @@ auto-test heal auth/login-success                # 自愈
 ```
 CLI flag (--header / --storage-state / --no-auth)
   ↓
-process.env (AUTO_TEST_HEADER_<KEY> / AUTO_TEST_STORAGE_STATE / AUTO_TEST_NO_AUTH / BASE_URL / AUTH_TOKEN)
+process.env (SPECMINT_HEADER_<KEY> / SPECMINT_STORAGE_STATE / SPECMINT_NO_AUTH / BASE_URL / AUTH_TOKEN)
   ↓
-.auto-test/config.json 的 auth 段
+.specmint/config.json 的 auth 段
   ↓
 Playwright 默认值
 ```
@@ -270,8 +270,8 @@ Playwright 默认值
 # .github/workflows/e2e.yml
 - name: E2E
   run: |
-    npx auto-test auth refresh admin    # 重新生成 storageState
-    npx auto-test run --priority P0
+    npx specmint auth refresh admin    # 重新生成 storageState
+    npx specmint run --priority P0
   env:
     AUTH_TOKEN: ${{ secrets.STAGING_TOKEN }}
     BASE_URL: ${{ vars.STAGING_URL }}
@@ -282,7 +282,7 @@ Playwright 默认值
 ### 目录约定
 
 ```
-.auto-test/auth/
+.specmint/auth/
 ├── admin.setup.ts                # 登录流程（手写或 PI 生成）
 ├── anonymous.setup.ts            # 访客态
 └── storage/
@@ -294,34 +294,34 @@ Playwright 默认值
 
 **手写**（最快上手）：
 ```bash
-auto-test auth init admin
-# 编辑 .auto-test/auth/admin.setup.ts
-auto-test auth refresh admin
+specmint auth init admin
+# 编辑 .specmint/auth/admin.setup.ts
+specmint auth refresh admin
 ```
 
 **PI 生成**：
 ```bash
-auto-test auth generate "管理员登录：admin/admin123，登录成功跳转 dashboard" --name admin
-auto-test auth refresh admin
+specmint auth generate "管理员登录：admin/admin123，登录成功跳转 dashboard" --name admin
+specmint auth refresh admin
 ```
 
 ### Playwright 自动配置（v2.2+）
 
-Playwright 配置由 auto-test 包内自带（`dist/runner/playwright.config.{js,ts}`），**不再生成于用户目录**。
-executor 通过 `import.meta.url` 定位并 `--config` 指向它，所有用户路径通过 `AUTO_TEST_*` env 注入。
+Playwright 配置由 specmint 包内自带（`dist/runner/playwright.config.{js,ts}`），**不再生成于用户目录**。
+executor 通过 `import.meta.url` 定位并 `--config` 指向它，所有用户路径通过 `SPECMINT_*` env 注入。
 
 projects 结构（动态挂载）：
 
 ```typescript
 // 检测到 *.setup.ts 时才挂 auth-setup project，连同 chromium 一起跑
 projects: hasSetupFiles
-  ? [{ name: 'auth-setup', testMatch: /\.setup\.ts$/, testDir: '.auto-test/auth' },
-     { name: 'chromium', testDir: '.auto-test/cases', dependencies: ['auth-setup'] }]
-  : [{ name: 'chromium', testDir: '.auto-test/cases' }]
+  ? [{ name: 'auth-setup', testMatch: /\.setup\.ts$/, testDir: '.specmint/auth' },
+     { name: 'chromium', testDir: '.specmint/cases', dependencies: ['auth-setup'] }]
+  : [{ name: 'chromium', testDir: '.specmint/cases' }]
 ```
 
 `auth-setup` project 仅在存在 setup 文件时挂载（根治两个独立 bug：占位 setup 失败连坐 / 无 setup 时跑空）。
-写了 setup文件即自动生效；按需用 `auto-test auth init <name>` 生成。
+写了 setup文件即自动生效；按需用 `specmint auth init <name>` 生成。
 
 ### 用例关联 auth
 
@@ -334,12 +334,12 @@ projects: hasSetupFiles
 跑用例：
 
 ```bash
-auto-test run --auth admin
+specmint run --auth admin
 ```
 
 自动：
 1. 过滤 `meta.auth === "admin"` 的用例
-2. 注入 storageState = `.auto-test/auth/storage/admin.json`
+2. 注入 storageState = `.specmint/auth/storage/admin.json`
 
 ## 7. PI 输出契约（generate）
 
@@ -362,7 +362,7 @@ LLM 输出仍可能不规范，**归一化层兜底**（`src/utils/normalize-met
 **CLI 强制覆盖（v2.1+）**：
 
 ```bash
-auto-test generate "登录失败提示" \
+specmint generate "登录失败提示" \
   --priority P1 \
   --module 用户认证 \
   --group auth
@@ -376,21 +376,21 @@ auto-test generate "登录失败提示" \
 
 `generate --url` 在浏览器里打开 URL、抓 a11y 快照再让 LLM 看。当一个 URL 被反复生成（同一页面不同用例）时，每次都开浏览器很慢。
 
-v2.1 把 `(URL + storageState)` 的快照落盘到 `.auto-test/cache/explore/`，TTL 内复用。
+v2.1 把 `(URL + storageState)` 的快照落盘到 `.specmint/cache/explore/`，TTL 内复用。
 
 ### 启用 / 禁用
 
 - 默认 `explore.cache.enabled = true`
 - 全局关闭：`explore.cache.enabled = false`
-- 单次跳过：`auto-test generate ... --no-explore-cache`
-- 手动清理：删除 `.auto-test/cache/` 或 `rm -rf .auto-test/cache/explore/*`
+- 单次跳过：`specmint generate ... --no-explore-cache`
+- 手动清理：删除 `.specmint/cache/` 或 `rm -rf .specmint/cache/explore/*`
 
 ### 命中判定
 
 缓存 key = `sha256(URL + storageState)`（按文件指纹 / mtime 计算），相同 (URL, 角色) 才命中：
 
 ```
-URL: https://example.com/login  +  storageState: .auto-test/auth/storage/admin.json
+URL: https://example.com/login  +  storageState: .specmint/auth/storage/admin.json
   → cache/explore/<hash>.json
 ```
 
@@ -435,11 +435,11 @@ YYYY-MM-DD_HHMMSS[-<slug>]
 
 ### 目录布局
 
-每次 `run` 在 `.auto-test/reports/runs/<batchId>/` 下产生三个产物：
+每次 `run` 在 `.specmint/reports/runs/<batchId>/` 下产生三个产物：
 
 ```
-.auto-test/reports/runs/<batchId>/
-├── run.json                # auto-test 结构化历史（runId / label / cases / totals / results）
+.specmint/reports/runs/<batchId>/
+├── run.json                # specmint 结构化历史（runId / label / cases / totals / results）
 ├── results.json            # Playwright JSON reporter 输出
 └── artifacts/              # Playwright outputDir（screenshots / videos / traces）
     └── <test-name>-.../
@@ -451,20 +451,20 @@ executor 在 spawn `playwright test` 前注入完整 env 协议（**统一收口
 
 | env | 值 | 用途 |
 |-----|----|------|
-| `AUTO_TEST_CASES_DIR` | `.auto-test/cases`（绝对路径） | 用例目录 |
-| `AUTO_TEST_AUTH_DIR` | `.auto-test/auth`（绝对路径） | 登录态 setup 目录 |
-| `AUTO_TEST_CONFIG_PATH` | `.auto-test/config.json`（绝对路径） | 包内配置读取 |
-| `AUTO_TEST_OUTPUT_DIR` | `.auto-test/reports/runs/<batchId>/artifacts` | trace/screenshot 落点 |
-| `AUTO_TEST_JSON_OUTPUT_FILE` | `.auto-test/reports/runs/<batchId>/results.json` | JSON reporter 输出 |
-| `AUTO_TEST_RUN_ID` | `<batchId>` | reporter 收尾 |
-| `AUTO_TEST_REPORTS_DIR` | `.auto-test/reports`（绝对路径） | reporter history store |
-| `BASE_URL` | `AUTO_TEST_BASE_URL ?? AUTO_TEST_BASE_URL ?? 'http://localhost:3000'` | 修 P0-1：透传给子进程 |
-| `AUTO_TEST_BROWSER_CHANNEL` | `auto` 检测后的回退结果（`chrome` / `msedge`，未回退则不设） | 浏览器通道 |
-| `AUTO_TEST_HEADER_*` | `--header K=V` 注入 | 鉴权头部 |
-| `AUTO_TEST_STORAGE_STATE` | `--storage-state` 路径 | 登录态注入 |
-| `AUTO_TEST_NO_AUTH` | `1`（当 `--no-auth`） | 跳过 storageState |
+| `SPECMINT_CASES_DIR` | `.specmint/cases`（绝对路径） | 用例目录 |
+| `SPECMINT_AUTH_DIR` | `.specmint/auth`（绝对路径） | 登录态 setup 目录 |
+| `SPECMINT_CONFIG_PATH` | `.specmint/config.json`（绝对路径） | 包内配置读取 |
+| `SPECMINT_OUTPUT_DIR` | `.specmint/reports/runs/<batchId>/artifacts` | trace/screenshot 落点 |
+| `SPECMINT_JSON_OUTPUT_FILE` | `.specmint/reports/runs/<batchId>/results.json` | JSON reporter 输出 |
+| `SPECMINT_RUN_ID` | `<batchId>` | reporter 收尾 |
+| `SPECMINT_REPORTS_DIR` | `.specmint/reports`（绝对路径） | reporter history store |
+| `BASE_URL` | `SPECMINT_BASE_URL ?? SPECMINT_BASE_URL ?? 'http://localhost:3000'` | 修 P0-1：透传给子进程 |
+| `SPECMINT_BROWSER_CHANNEL` | `auto` 检测后的回退结果（`chrome` / `msedge`，未回退则不设） | 浏览器通道 |
+| `SPECMINT_HEADER_*` | `--header K=V` 注入 | 鉴权头部 |
+| `SPECMINT_STORAGE_STATE` | `--storage-state` 路径 | 登录态注入 |
+| `SPECMINT_NO_AUTH` | `1`（当 `--no-auth`） | 跳过 storageState |
 
-env 缺失时统一回退 `cwd/.auto-test/*`（不依赖 `__dirname`，npx 安装与 dist 状态行为一致）。
+env 缺失时统一回退 `cwd/.specmint/*`（不依赖 `__dirname`，npx 安装与 dist 状态行为一致）。
 
 ### `--label` 校验
 
@@ -476,7 +476,7 @@ env 缺失时统一回退 `cwd/.auto-test/*`（不依赖 `__dirname`，npx 安�
 ### 历史查看
 
 ```bash
-auto-test history --limit 5
+specmint history --limit 5
 # batchId              label    status    totals           startedAt
 # 2026-08-27_150059    smoke    passed    12/12 (1.5s)    2026-08-27T15:00:59Z
 # 2026-08-27_142301    p0       failed    3/5 (8.2s)      2026-08-27T14:23:01Z
@@ -485,11 +485,11 @@ auto-test history --limit 5
 
 按 batchId 排序（字典序），所以日期从早到晚自然展开。
 
-### 何时该清理 `.auto-test/reports/runs/`
+### 何时该清理 `.specmint/reports/runs/`
 
 - 旧 run 已不再需要（参考 `history --limit N`）
 - 磁盘吃紧
-- CI 流水线可在每次 pipeline 起点 `rm -rf .auto-test/reports/runs/*` 强制冷启动
+- CI 流水线可在每次 pipeline 起点 `rm -rf .specmint/reports/runs/*` 强制冷启动
 
 ## 11. 退出码
 
@@ -508,7 +508,7 @@ auto-test history --limit 5
 
 ### Q：路径能改成 `e2e/` 吗？
 
-**不能**。v2 强制 `.auto-test/`，避免配置漂移。
+**不能**。v2 强制 `.specmint/`，避免配置漂移。
 
 ### Q：priority 必须是 P0-P3 吗？
 
@@ -516,13 +516,13 @@ auto-test history --limit 5
 
 ### Q：项目根污染怎么办？
 
-v2 后不存在。**老项目**手动删 `tests/`、`reports/`、`auto-test.config.json`（项目根），然后跑 `auto-test init` 重建。
+v2 后不存在。**老项目**手动删 `tests/`、`reports/`、`specmint.config.json`（项目根），然后跑 `specmint init` 重建。
 
 ### Q：需要多角色怎么办？
 
 v2 默认单一角色。流程：
 1. 先用一个角色跑完所有用例
-2. `auto-test auth refresh <next-role>`
+2. `specmint auth refresh <next-role>`
 3. 跑另一角色用例
 
 不同角色在不同测试批次切换，不并发。
@@ -533,7 +533,7 @@ v2 默认单一角色。流程：
 
 ### Q：LLM 不可用怎么办？
 
-`auto-test models list` 看哪些 provider/model 已登录。未登录的 provider 需要在 pi-agent 里 `/login` 配置 API key。
+`specmint models list` 看哪些 provider/model 已登录。未登录的 provider 需要在 pi-agent 里 `/login` 配置 API key。
 
 ### Q：PI 生成的 priority 不对？
 
@@ -544,7 +544,7 @@ v2 默认单一角色。流程：
 generate 命令支持 `--group` / `--module` 强制锁定，传了之后跳过归一化层直接落盘：
 
 ```bash
-auto-test generate "登录失败提示" --priority P1 --group auth --module 用户认证
+specmint generate "登录失败提示" --priority P1 --group auth --module 用户认证
 ```
 
 ### Q：探索快照多久失效？
@@ -554,35 +554,35 @@ auto-test generate "登录失败提示" --priority P1 --group auth --module 用�
 ### Q：能关掉探索快照缓存吗？
 
 - 配置：`explore.cache.enabled = false`
-- 单次：`auto-test generate ... --no-explore-cache`
-- 物理：`rm -rf .auto-test/cache/explore/`
+- 单次：`specmint generate ... --no-explore-cache`
+- 物理：`rm -rf .specmint/cache/explore/`
 
 ## 13. 升级指南
 
 ### v1 → v2
 
-1. 删项目根的 `auto-test.config.json` 和 `playwright.config.ts`
+1. 删项目根的 `specmint.config.json` 和 `playwright.config.ts`
 2. 删项目根的 `tests/` 和 `reports/`（如有）
-3. 跑 `auto-test init` 重建 `.auto-test/` 布局
-4. 跑 `auto-test models select` 选 LLM
-5. 跑 `auto-test auth init <role>`（如需登录态）
-6. 跑 `auto-test generate "<desc>" --priority P0` 开始
+3. 跑 `specmint init` 重建 `.specmint/` 布局
+4. 跑 `specmint models select` 选 LLM
+5. 跑 `specmint auth init <role>`（如需登录态）
+6. 跑 `specmint generate "<desc>" --priority P0` 开始
 
 ### v2 → v2.1
 
 完全向后兼容：
 
-- 首次运行会自动创建 `.auto-test/cache/`
+- 首次运行会自动创建 `.specmint/cache/`
 - 旧项目无 `explore.cache` 配置时取默认值（启用、TTL 10 分钟）
-- 想强制冷启动：`rm -rf .auto-test/cache/`
+- 想强制冷启动：`rm -rf .specmint/cache/`
 
 ### v2.1 → v2.2（批次号与产物落点）
 
-完全向后兼容。Playwright 产物（screenshots / videos / traces / JSON 报告）现在按批次号落在 `.auto-test/reports/runs/<batchId>/artifacts/` 和 `<batchId>/results.json`，不再写到项目根的 `test-results/`。
+完全向后兼容。Playwright 产物（screenshots / videos / traces / JSON 报告）现在按批次号落在 `.specmint/reports/runs/<batchId>/artifacts/` 和 `<batchId>/results.json`，不再写到项目根的 `test-results/`。
 
 升级步骤：
 
-1. **用户项目**的 `.gitignore` 里 `.auto-test/reports/runs/` 会覆盖之前的 `.auto-test/reports/runs/*/.tmp/`，如果之前手写过旧规则可以删除
-2. **用户项目**的 `playwright.config.ts`（在 `.auto-test/` 下）会被 `init` 重新生成；如已自改，请手动加入 `outputDir: process.env.AUTO_TEST_OUTPUT_DIR ?? './test-results'` 与 `outputFile: process.env.AUTO_TEST_JSON_OUTPUT_FILE`
+1. **用户项目**的 `.gitignore` 里 `.specmint/reports/runs/` 会覆盖之前的 `.specmint/reports/runs/*/.tmp/`，如果之前手写过旧规则可以删除
+2. **用户项目**的 `playwright.config.ts`（在 `.specmint/` 下）会被 `init` 重新生成；如已自改，请手动加入 `outputDir: process.env.SPECMINT_OUTPUT_DIR ?? './test-results'` 与 `outputFile: process.env.SPECMINT_JSON_OUTPUT_FILE`
 3. 如果之前项目根有遗留的 `test-results/` / `playwright-report/`，手动 `rm -rf` 清理一次即可
-4. 旧的 `.auto-test/reports/runs/<ISO 时间戳>/` 目录仍然可用（路径格式升级为 `YYYY-MM-DD_HHMMSS` 但目录布局兼容）
+4. 旧的 `.specmint/reports/runs/<ISO 时间戳>/` 目录仍然可用（路径格式升级为 `YYYY-MM-DD_HHMMSS` 但目录布局兼容）

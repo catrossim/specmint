@@ -2,7 +2,7 @@
  * 子进程 env 协议统一收口。
  *
  * run / rerun / auth refresh 三入口共用此函数，避免各自实现漂移。
- * 包内 Playwright 配置（dist/runner/playwright.config.js）通过 AUTO_TEST_* env 读取
+ * 包内 Playwright 配置（dist/runner/playwright.config.js）通过 SPECMINT_* env 读取
  * 用户路径与鉴权；BASE_URL 通过 buildSpawnEnv 显式透传（修 P0-1）。
  */
 import { resolve as resolveFile } from 'node:path';
@@ -34,7 +34,7 @@ export interface BuiltSpawnEnv {
 }
 
 function headerKeyToEnv(key: string): string {
-  return `AUTO_TEST_HEADER_${key.replace(/-/g, '_').toUpperCase()}`;
+  return `SPECMINT_HEADER_${key.replace(/-/g, '_').toUpperCase()}`;
 }
 
 /**
@@ -57,25 +57,25 @@ function expandEnv(value: string | undefined, source: string): string | undefine
 export function buildSpawnEnv(opts: SpawnEnvOptions): BuiltSpawnEnv {
   const env: Record<string, string | undefined> = {
     ...process.env,
-    AUTO_TEST_CASES_DIR: resolveFile(opts.casesDir),
-    AUTO_TEST_AUTH_DIR: resolveFile(opts.authDir),
-    AUTO_TEST_CONFIG_PATH: resolveFile(opts.configPath),
-    AUTO_TEST_REPORTS_DIR: resolveFile(opts.reportsDir),
-    AUTO_TEST_RUN_ID: opts.runId,
-    AUTO_TEST_OUTPUT_DIR: resolveFile(opts.outputDir),
-    AUTO_TEST_JSON_OUTPUT_FILE: resolveFile(opts.jsonOutputFile),
-    // 优先级：env (BASE_URL / AUTO_TEST_BASE_URL) > config.runner.baseURL > 默认
+    SPECMINT_CASES_DIR: resolveFile(opts.casesDir),
+    SPECMINT_AUTH_DIR: resolveFile(opts.authDir),
+    SPECMINT_CONFIG_PATH: resolveFile(opts.configPath),
+    SPECMINT_REPORTS_DIR: resolveFile(opts.reportsDir),
+    SPECMINT_RUN_ID: opts.runId,
+    SPECMINT_OUTPUT_DIR: resolveFile(opts.outputDir),
+    SPECMINT_JSON_OUTPUT_FILE: resolveFile(opts.jsonOutputFile),
+    // 优先级：env (BASE_URL / SPECMINT_BASE_URL) > config.runner.baseURL > 默认
     BASE_URL:
       process.env.BASE_URL ??
-      process.env.AUTO_TEST_BASE_URL ??
+      process.env.SPECMINT_BASE_URL ??
       expandEnv(opts.config.runner?.baseURL, 'runner.baseURL') ??
       'http://localhost:3000',
   };
 
   if (opts.auth?.noAuth) {
-    env.AUTO_TEST_NO_AUTH = '1';
+    env.SPECMINT_NO_AUTH = '1';
   } else if (opts.auth?.storageState) {
-    env.AUTO_TEST_STORAGE_STATE = resolveFile(opts.auth.storageState);
+    env.SPECMINT_STORAGE_STATE = resolveFile(opts.auth.storageState);
   }
 
   if (opts.auth?.headers) {
@@ -89,7 +89,7 @@ export function buildSpawnEnv(opts: SpawnEnvOptions): BuiltSpawnEnv {
   }
 
   const { channel, fellBack } = resolveBrowserChannel(opts.config.runner.browserChannel);
-  if (channel) env.AUTO_TEST_BROWSER_CHANNEL = channel;
+  if (channel) env.SPECMINT_BROWSER_CHANNEL = channel;
 
   return { env, fellBackToSystemBrowser: fellBack };
 }

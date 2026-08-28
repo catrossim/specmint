@@ -1,9 +1,9 @@
 /**
  * 用例名: login-flow
- * 描述: auto-test examples 的登录流程端到端用例（手写范例）
+ * 描述: specmint examples 的登录流程端到端用例（手写范例）
  *
  * 该文件位于 examples/ 下，不会被 Playwright 自动发现（testDir=./tests）。
- * 验证步骤：复制到 tests/login-flow.spec.ts 后执行 `auto-test run`。
+ * 验证步骤：复制到 tests/login-flow.spec.ts 后执行 `specmint run`。
  *
  * 设计原则演示：
  * - 仅使用语义定位器：getByLabel / getByTestId / getByRole / getByText
@@ -13,7 +13,7 @@
  */
 import { test, expect } from '@playwright/test';
 
-test.describe('auto-test examples · 登录流程', () => {
+test.describe('specmint examples · 登录流程', () => {
   test.beforeEach(async ({ page }) => {
     // 进入示例应用首页（baseURL 由 playwright.config.ts 提供）
     await page.goto('/login-demo.html');

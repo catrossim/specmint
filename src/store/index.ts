@@ -1,11 +1,11 @@
 /**
- * Store 工厂：基于 cwd 与固定的 .auto-test/ 布局实例化 CaseStore / HistoryStore。
+ * Store 工厂：基于 cwd 与固定的 .specmint/ 布局实例化 CaseStore / HistoryStore。
  *
  * 路径不可配置：所有路径常量都在 config.ts 的 STORAGE_LAYOUT 中固定，意图：
  * - 减少用户决策成本
  * - 避免不同人 / 不同机器的配置漂移
  * - 让仓库根目录是 .gitignore 的唯一权威
- * - 把所有 auto-test 产物（含两个配置文件）都收纳在 .auto-test/ 下
+ * - 把所有 specmint 产物（含两个配置文件）都收纳在 .specmint/ 下
  */
 import { resolve as resolvePath } from 'node:path';
 import { STORAGE_LAYOUT } from '../config.js';

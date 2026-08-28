@@ -1,0 +1,3 @@
+# Reserved for future helper scripts.
+# This directory is intentionally kept under git control via .gitkeep so it
+# survives `git clean`. Add project-specific tooling here as needed.

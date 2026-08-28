@@ -37,7 +37,7 @@ export const NO_BROWSER_GUIDANCE = [
   '  1. 联网环境         npx playwright install chromium',
   '  2. 内网/受限环境    PLAYWRIGHT_DOWNLOAD_HOST=<内网镜像> npx playwright install chromium',
   '  3. 已装 Chrome/Edge  自动回退；若仍未生效，确认浏览器确实安装（macOS /Applications、Linux which、Win 注册表）',
-  '或显式指定 channel：runner.browserChannel: "chrome" / "msedge"（.auto-test/config.json）',
+  '或显式指定 channel：runner.browserChannel: "chrome" / "msedge"（.specmint/config.json）',
 ].join('\n');
 
 export function resolveBrowserChannel(
@@ -58,7 +58,7 @@ export function resolveBrowserChannel(
   try {
     if (existsSync(chromiumAny.channel('chrome').executablePath())) {
       logger.warn(
-        '[auto-test] Playwright chromium 未检测到，自动回退使用系统 Chrome（channel=chrome）',
+        '[specmint] Playwright chromium 未检测到，自动回退使用系统 Chrome（channel=chrome）',
       );
       return { channel: 'chrome', fellBack: true };
     }
@@ -68,7 +68,7 @@ export function resolveBrowserChannel(
   try {
     if (existsSync(chromiumAny.channel('msedge').executablePath())) {
       logger.warn(
-        '[auto-test] Playwright chromium 与系统 Chrome 均不可用，自动回退使用系统 Edge（channel=msedge）',
+        '[specmint] Playwright chromium 与系统 Chrome 均不可用，自动回退使用系统 Edge（channel=msedge）',
       );
       return { channel: 'msedge', fellBack: true };
     }

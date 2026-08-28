@@ -75,7 +75,7 @@ export async function explorePage(options: ExploreOptions): Promise<ExploreResul
 
   // 1. 先查缓存。命中直接返回，跳过浏览器启动。
   if (cacheEnabled) {
-    const dir = options.cache?.dir ?? '.auto-test/cache/explore';
+    const dir = options.cache?.dir ?? '.specmint/cache/explore';
     const hit = readExploreCache(cacheKeyParams, { dir });
     if (hit) {
       logger.info(`[explore] 缓存命中，跳过浏览器: ${hit.title} (${hit.url})`);
@@ -119,7 +119,7 @@ export async function explorePage(options: ExploreOptions): Promise<ExploreResul
 
     // 2. 探索成功才落缓存。失败/异常不会污染缓存。
     if (cacheEnabled) {
-      const dir = options.cache?.dir ?? '.auto-test/cache/explore';
+      const dir = options.cache?.dir ?? '.specmint/cache/explore';
       const ttlMs = options.cache?.ttlMs ?? 600_000;
       writeExploreCache(cacheKeyParams, result, { dir, ttlMs });
     }

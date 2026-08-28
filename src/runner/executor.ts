@@ -37,9 +37,9 @@ export interface RunOptions {
   cwd?: string;
   casesDir: string;
   reportsDir: string;
-  /** config.json 绝对路径（AUTO_TEST_CONFIG_PATH 注入包内配置）。 */
+  /** config.json 绝对路径（SPECMINT_CONFIG_PATH 注入包内配置）。 */
   configPath: string;
-  /** .auto-test/auth/ 绝对路径（AUTO_TEST_AUTH_DIR 注入包内配置）。 */
+  /** .specmint/auth/ 绝对路径（SPECMINT_AUTH_DIR 注入包内配置）。 */
   authDir: string;
   /** 已读取的 config.json 内容（spawn-env 据此决策浏览器通道等）。 */
   config: AutoTestConfig;
@@ -47,9 +47,9 @@ export interface RunOptions {
   passthrough?: string[];
   /**
    * 鉴权注入（阶段 1）：
-   * - headers：可多次传 "K=V" 形式，转成 AUTO_TEST_HEADER_<KEY>=V env
-   * - storageState：覆盖 config.auth.storageState（→ AUTO_TEST_STORAGE_STATE env）
-   * - noAuth：跳过 storageState（→ AUTO_TEST_NO_AUTH=1）
+   * - headers：可多次传 "K=V" 形式，转成 SPECMINT_HEADER_<KEY>=V env
+   * - storageState：覆盖 config.auth.storageState（→ SPECMINT_STORAGE_STATE env）
+   * - noAuth：跳过 storageState（→ SPECMINT_NO_AUTH=1）
    */
   auth?: {
     headers?: string[];
@@ -83,7 +83,7 @@ export async function runTests(options: RunOptions): Promise<RunResult> {
 
   const snapshot: RunConfigSnapshot = {
     configPath: runnerConfigPath,
-    baseURL: process.env.AUTO_TEST_BASE_URL ?? null,
+    baseURL: process.env.SPECMINT_BASE_URL ?? null,
     retries: options.retries ?? (process.env.CI ? 2 : 1),
     workers: options.workers ?? (process.env.CI ? 1 : undefined) ?? 1,
     browser: options.browser ?? 'chromium',

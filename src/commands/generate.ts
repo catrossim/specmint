@@ -52,7 +52,7 @@ export interface GenerateOptions {
   priority?: Priority;
   /**
    * 本次生成使用的 model（provider/id），覆盖 config.agent.model。
-   * 推荐通过 `auto-test models select` 设置默认；这里仅做一次性覆盖。
+   * 推荐通过 `specmint models select` 设置默认；这里仅做一次性覆盖。
    */
   model?: string;
   tag?: string[];
@@ -104,7 +104,7 @@ export interface GenerateOptions {
   /**
    * 交互式确认（来自 CLI `--interactive`）。
    * 仅在 module/group 都未指定时生效：跑一次轻量 LLM 分类 → 让用户确认/修改元信息 → 再正式生成。
-   * 非 TTY / AUTO_TEST_NO_INTERACTIVE=1 时自动降级为跳过交互。
+   * 非 TTY / SPECMINT_NO_INTERACTIVE=1 时自动降级为跳过交互。
    */
   interactive?: boolean;
   /**
@@ -119,7 +119,7 @@ export interface GenerateOptions {
   retryBackoffMs?: number;
   /**
    * Checkpoint 目录（来自 CLI `--checkpoint <dir>`）。
-   * 默认 `.auto-test/runs/`。仅批量模式生效：每条用例完成后增量写一份 state file，
+   * 默认 `.specmint/runs/`。仅批量模式生效：每条用例完成后增量写一份 state file，
    * 全部成功时自动清理，部分失败保留供 `--resume` 诊断。
    */
   checkpointDir?: string;
@@ -198,7 +198,7 @@ export async function generateCommand(
     throw new CliError({
       code: ExitCode.USAGE_ERROR,
       message: `必须通过 --priority 指定用例优先级（${PRIORITIES.join('|')}）`,
-      hint: `示例：auto-test generate "管理员登录跳转 dashboard" --priority P0`,
+      hint: `示例：specmint generate "管理员登录跳转 dashboard" --priority P0`,
     });
   }
   const priority: Priority = options.priority;
@@ -497,7 +497,7 @@ async function runExploreForUrl(
       ? false
       : (config.explore.cache?.enabled !== false);
   const cacheTtl = ctx.options.exploreCacheTtl ?? config.explore.cache?.ttlMs ?? 600_000;
-  const cacheDir = config.explore.cache?.dir ?? '.auto-test/cache/explore';
+  const cacheDir = config.explore.cache?.dir ?? '.specmint/cache/explore';
 
   logger.info(`探索 URL: ${url}`);
   const result = await explorePage({

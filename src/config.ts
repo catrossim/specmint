@@ -1,5 +1,5 @@
 /**
- * auto-test 配置加载器
+ * specmint 配置加载器
  *
  * 设计原则：
  * - 文件不存在时返回默认值（保证 init 前也能跑部分命令）
@@ -8,12 +8,12 @@
  * - 忽略未知字段（如 $schema、已被废弃的 storage、runner.configPath），向前兼容
  *
  * 路径策略：
- * - auto-test 所有产物（包括配置文件本身）都收纳在 `.auto-test/` 下
+ * - specmint 所有产物（包括配置文件本身）都收纳在 `.specmint/` 下
  * - 不可在配置文件中改路径——减少决策成本 + 避免配置漂移
- * - 配置文件位置：`.auto-test/config.json`（老位置 `auto-test.config.json` 兼容读取 + 引导迁移）
+ * - 配置文件位置：`.specmint/config.json`（老位置 `specmint.config.json` 兼容读取 + 引导迁移）
  *
  * 默认值（DEFAULT_CONFIG）保持最小可工作集合；如需改 model / browser / selectorPolicy
- * 直接在 .auto-test/config.json 里写即可。
+ * 直接在 .specmint/config.json 里写即可。
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -30,7 +30,7 @@ export interface AutoTestConfig {
     /**
      * 形如 "anthropic/claude-sonnet-latest"。
      * 未设置时由 pi-agent ModelRuntime 选第一个已认证的 model。
-     * 推荐通过 `auto-test models select` 选择；不要手填不在 pi-agent 目录里的 id。
+     * 推荐通过 `specmint models select` 选择；不要手填不在 pi-agent 目录里的 id。
      */
     model?: string;
     delegate: AgentDelegate;
@@ -47,7 +47,7 @@ export interface AutoTestConfig {
      *
      * - `enabled=false` 跳过读写（CLI `--no-explore-cache` 也能关闭单次调用）
      * - `ttlMs` 默认 10 分钟，过期自动失效
-     * - `dir` 默认 `.auto-test/cache/explore`，文件命名 `<key>.json`
+     * - `dir` 默认 `.specmint/cache/explore`，文件命名 `<key>.json`
      *
      * 注意：快照里不含登录态；如需按角色缓存，调用方可在 storageState 指纹里
      * 注入角色标识，详见 agent/explore-cache.ts 的 storageStateFingerprint。
@@ -81,7 +81,7 @@ export interface AutoTestConfig {
      * 被测目标 baseURL，注入到 Playwright `use.baseURL`。
      *
      * 优先级（env 最高，符合 12-factor）：
-     *   process.env.BASE_URL > process.env.AUTO_TEST_BASE_URL > runner.baseURL > 'http://localhost:3000'
+     *   process.env.BASE_URL > process.env.SPECMINT_BASE_URL > runner.baseURL > 'http://localhost:3000'
      *
      * 支持 `${ENV_VAR}` 展开（与 auth.storageState 一致）。
      */
@@ -92,11 +92,11 @@ export interface AutoTestConfig {
    *
    * - 字段值支持 `${ENV_VAR}` 占位符（仅本段允许；path 字段不允许）
    * - `headers` 与 `extraHTTPHeaders` 等价，合并传给 Playwright
-   * - `storageState` 路径相对 cwd（建议放在 `.auto-test/auth/storage/`）
+   * - `storageState` 路径相对 cwd（建议放在 `.specmint/auth/storage/`）
    * - 未设置则完全跳过——公开页测试场景适用
    *
    * 与 setup.ts 的关系：本段是"项目默认态"（单一身份）；
-   * 多角色 / 动态登录通过 `.auto-test/auth/*.setup.ts` + Playwright project 拆分处理。
+   * 多角色 / 动态登录通过 `.specmint/auth/*.setup.ts` + Playwright project 拆分处理。
    */
   auth?: {
     headers?: Record<string, string>;
@@ -125,7 +125,7 @@ export const DEFAULT_CONFIG: AutoTestConfig = {
   version: '1',
   agent: {
     // 不写默认值——model 由 pi-agent 决定。
-    // 用 `auto-test models select` 锁定到具体 provider/model。
+    // 用 `specmint models select` 锁定到具体 provider/model。
     model: undefined,
     delegate: 'sdk',
     systemPromptAdditions: '',
@@ -139,7 +139,7 @@ export const DEFAULT_CONFIG: AutoTestConfig = {
     cache: {
       enabled: true,
       ttlMs: 600_000, // 10 分钟
-      dir: '.auto-test/cache/explore',
+      dir: '.specmint/cache/explore',
     },
   },
   generation: {
@@ -161,31 +161,26 @@ export const DEFAULT_CONFIG: AutoTestConfig = {
 };
 
 /**
- * auto-test 在仓库内的固定布局常量。
+ * specmint 在仓库内的固定布局常量。
  *
  * 任何自定义路径的需求一律不提供；如确需在非 cwd 运行，可在外部 chdir
- * 或把 .auto-test/ 软链接到期望位置。
+ * 或把 .specmint/ 软链接到期望位置。
  */
 export const STORAGE_LAYOUT = {
-  root: '.auto-test',
-  cases: '.auto-test/cases',
-  pages: '.auto-test/cases/pages',
-  reports: '.auto-test/reports',
-  configFile: '.auto-test/config.json',
-  playwrightConfig: '.auto-test/playwright.config.ts',
-  authDir: '.auto-test/auth',
-  authStorage: '.auto-test/auth/storage',
+  root: '.specmint',
+  cases: '.specmint/cases',
+  pages: '.specmint/cases/pages',
+  reports: '.specmint/reports',
+  configFile: '.specmint/config.json',
+  playwrightConfig: '.specmint/playwright.config.ts',
+  authDir: '.specmint/auth',
+  authStorage: '.specmint/auth/storage',
 } as const;
-
-/** 老版本配置文件路径（仅用于一次性迁移提示，不推荐继续使用） */
-const LEGACY_CONFIG_PATHS = ['auto-test.config.json'] as const;
 
 export interface LoadConfigResult {
   config: AutoTestConfig;
   /** 当前实际使用的配置文件路径（绝对路径） */
   configPath: string;
-  /** 是否使用了老路径（用于在 init / print 时输出迁移提示） */
-  fromLegacy: boolean;
 }
 
 export function loadConfig(cwd: string = process.cwd()): AutoTestConfig {
@@ -197,25 +192,13 @@ export function loadConfig(cwd: string = process.cwd()): AutoTestConfig {
  */
 export function loadConfigDetailed(cwd: string = process.cwd()): LoadConfigResult {
   const primaryPath = join(cwd, STORAGE_LAYOUT.configFile);
-  const primaryExists = existsSync(primaryPath);
 
-  if (!primaryExists) {
-    // 兼容老路径：找到就加载，但提示迁移
-    for (const legacyRel of LEGACY_CONFIG_PATHS) {
-      const legacyPath = join(cwd, legacyRel);
-      if (existsSync(legacyPath)) {
-        logger.warn(
-          `[config] 检测到老位置配置 ${legacyRel}，将加载但推荐迁移到 ${STORAGE_LAYOUT.configFile}`,
-        );
-        const config = parseConfigFile(legacyPath);
-        return { config, configPath: legacyPath, fromLegacy: true };
-      }
-    }
-    return { config: deepClone(DEFAULT_CONFIG), configPath: primaryPath, fromLegacy: false };
+  if (!existsSync(primaryPath)) {
+    return { config: deepClone(DEFAULT_CONFIG), configPath: primaryPath };
   }
 
   const config = parseConfigFile(primaryPath);
-  return { config, configPath: primaryPath, fromLegacy: false };
+  return { config, configPath: primaryPath };
 }
 
 function parseConfigFile(path: string): AutoTestConfig {
@@ -226,7 +209,7 @@ function parseConfigFile(path: string): AutoTestConfig {
     throw new CliError({
       code: ExitCode.IO_ERROR,
       message: `解析 ${path} 失败：${(err as Error).message}`,
-      hint: '请运行 `auto-test init --force` 重置为默认配置',
+      hint: '请运行 `specmint init --force` 重置为默认配置',
     });
   }
 

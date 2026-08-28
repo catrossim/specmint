@@ -87,7 +87,7 @@ export function validateCaseMeta(meta: Partial<CaseMeta>): ValidationError[] {
 
   if (meta.auth !== undefined && meta.auth !== null && meta.auth !== '') {
     if (typeof meta.auth !== 'string' || !SINGLE_KEBAB_RE.test(meta.auth)) {
-      errors.push({ field: 'auth', message: 'auth 必须是 kebab-case（引用 .auto-test/auth/<auth>.setup.ts）' });
+      errors.push({ field: 'auth', message: 'auth 必须是 kebab-case（引用 .specmint/auth/<auth>.setup.ts）' });
     }
   }
 

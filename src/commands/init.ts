@@ -1,18 +1,18 @@
 /**
- * init 子命令：在当前目录初始化 auto-test 项目
+ * init 子命令：在当前目录初始化 specmint 项目
  *
  * 职责：
- * 1. 创建 .auto-test/ 目录结构（cases、cases/pages、reports、reports/runs、auth、cache）
- * 2. 写入 .auto-test/config.json（默认 runner.timeoutMs / browserChannel 等）
- * 3. 检测历史 init 产物（旧 .auto-test/playwright.config.ts / auto-test-reporter.ts / 占位 setup）
+ * 1. 创建 .specmint/ 目录结构（cases、cases/pages、reports、reports/runs、auth、cache）
+ * 2. 写入 .specmint/config.json（默认 runner.timeoutMs / browserChannel 等）
+ * 3. 检测历史 init 产物（旧 .specmint/playwright.config.ts / specmint-reporter.ts / 占位 setup）
  *    如存在且非空，提示用户可手动删除（不影响运行，因为包内配置已接管）
  * 4. 幂等追加 .gitignore 条目
  * 5. 打印下一步建议
  *
  * 设计：
- * - 不再生成 .auto-test/playwright.config.ts 与 auto-test-reporter.ts —— 这些是包内部资源，
+ * - 不再生成 .specmint/playwright.config.ts 与 specmint-reporter.ts —— 这些是包内部资源，
  *   由 dist/runner/playwright.config.{js,ts} 与 dist/runner/reporter.js 提供
- * - 不再生成 .auto-test/auth/admin.setup.ts 占位 —— 用户需要时跑 `auto-test auth init <name>`
+ * - 不再生成 .specmint/auth/admin.setup.ts 占位 —— 用户需要时跑 `specmint auth init <name>`
  *   自助生成，避免占位文件失败连坐真实用例
  * - 不做 npm install / npx playwright install —— 这些需要外部副作用，由用户自行执行
  */
@@ -23,21 +23,21 @@ import { STORAGE_LAYOUT } from '../config.js';
 import { CliError, ExitCode } from '../utils/errors.js';
 
 const DEFAULT_DIRECTORIES = [
-  '.auto-test',
-  '.auto-test/cases',
-  '.auto-test/cases/pages',
-  '.auto-test/reports',
-  '.auto-test/reports/runs',
-  '.auto-test/auth',
-  '.auto-test/auth/storage',
-  '.auto-test/cache',
-  '.auto-test/cache/explore',
+  '.specmint',
+  '.specmint/cases',
+  '.specmint/cases/pages',
+  '.specmint/reports',
+  '.specmint/reports/runs',
+  '.specmint/auth',
+  '.specmint/auth/storage',
+  '.specmint/cache',
+  '.specmint/cache/explore',
 ];
 
 /**
- * 默认 .auto-test/config.json 内容
+ * 默认 .specmint/config.json 内容
  *
- * 用户可改：model（auto-test models select）、defaultBrowser / auth / agent 等其他字段
+ * 用户可改：model（specmint models select）、defaultBrowser / auth / agent 等其他字段
  * 不应改：version（schema 版本）、storage 段（路径不可配置）
  */
 const DEFAULT_CONFIG_OBJECT = {
@@ -79,9 +79,9 @@ const DEFAULT_CONFIG_OBJECT = {
 };
 
 const GITIGNORE_ADDITIONS = [
-  '.auto-test/reports/runs/',
-  '.auto-test/.env',
-  '.auto-test/cache/',
+  '.specmint/reports/runs/',
+  '.specmint/.env',
+  '.specmint/cache/',
   'test-results/',
   'playwright-report/',
 ];
@@ -95,12 +95,12 @@ const LEGACY_FILES = [
     reason: '旧内联 Playwright 配置（含残缺 reporter 触发收尾断链），已由包内配置 dist/runner/playwright.config.{js,ts} 接管',
   },
   {
-    path: '.auto-test/auto-test-reporter.ts',
+    path: '.specmint/specmint-reporter.ts',
     reason: '旧 reporter re-export，已被包内 dist/runner/reporter.js 直接 import 替代',
   },
   {
     path: `${STORAGE_LAYOUT.authDir}/admin.setup.ts`,
-    reason: '占位 setup 可能失败连坐真实用例；按需用 `auto-test auth init <name>` 生成',
+    reason: '占位 setup 可能失败连坐真实用例；按需用 `specmint auth init <name>` 生成',
   },
 ];
 
@@ -161,14 +161,14 @@ function ensureGitignore(cwd: string): boolean {
 
   const needsLeadingNewline = existing.length > 0 && !existing.endsWith('\n');
   const newContent =
-    existing + (needsLeadingNewline ? '\n' : '') + '# auto-test\n' + missing.join('\n') + '\n';
+    existing + (needsLeadingNewline ? '\n' : '') + '# specmint\n' + missing.join('\n') + '\n';
   writeFileSync(gitignorePath, newContent, 'utf-8');
   return true;
 }
 
 export async function initCommand(options: InitOptions): Promise<void> {
   const cwd = process.cwd();
-  logger.info(`在 ${cwd} 初始化 auto-test 项目...`);
+  logger.info(`在 ${cwd} 初始化 specmint 项目...`);
 
   const createdDirs = ensureDirs(cwd, DEFAULT_DIRECTORIES);
   logger.debug(`创建 ${createdDirs.length} 个目录`, { createdDirs });
@@ -190,14 +190,14 @@ export async function initCommand(options: InitOptions): Promise<void> {
   const nextSteps = [
     'npm install',
     'npx playwright install chromium   # 或装系统 Chrome/Edge 走 auto 通道',
-    'auto-test models select',
-    'auto-test generate "<测试需求描述>" --priority P0',
+    'specmint models select',
+    'specmint generate "<测试需求描述>" --priority P0',
   ];
 
   const result: InitResult = {
     ok: true,
     cwd,
-    root: '.auto-test',
+    root: '.specmint',
     configPath: STORAGE_LAYOUT.configFile,
     createdDirs,
     wroteConfig,

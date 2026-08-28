@@ -1,10 +1,10 @@
 /**
  * skill export 子命令：导出 agent skill 定义
  *
- * 产出 ./skills/auto-test/SKILL.md，遵循 CodeBuddy / Claude Code skill 规范。
+ * 产出 ./skills/specmint/SKILL.md，遵循 CodeBuddy / Claude Code skill 规范。
  *
  * 数据源策略：
- * - 优先读 skills/auto-test/SKILL.md（仓库内最新内容，由 docs/USAGE.md / examples/e2e-verify.md 同步）
+ * - 优先读 skills/specmint/SKILL.md（仓库内最新内容，由 docs/USAGE.md / examples/e2e-verify.md 同步）
  * - 找不到则报错（提示先维护 SKILL.md）
  *
  * 两个 target 区别：
@@ -35,7 +35,7 @@ export interface SkillExportResult {
  * 仓库内 SKILL.md 路径（数据源）
  */
 function repoSkillPath(): string {
-  return join(process.cwd(), 'skills', 'auto-test', 'SKILL.md');
+  return join(process.cwd(), 'skills', 'specmint', 'SKILL.md');
 }
 
 /**
@@ -58,14 +58,14 @@ export async function skillExportCommand(options: SkillExportOptions): Promise<S
     throw new CliError({
       code: ExitCode.NOT_FOUND,
       message: `找不到源 SKILL.md：${sourcePath}`,
-      hint: '请确认仓库内 skills/auto-test/SKILL.md 存在',
+      hint: '请确认仓库内 skills/specmint/SKILL.md 存在',
     });
   }
 
   const raw = readFileSync(sourcePath, 'utf-8');
   const rendered = target === 'codebuddy' ? raw : renderForClaudeCode(raw);
 
-  const outDir = join(process.cwd(), 'skills', 'auto-test');
+  const outDir = join(process.cwd(), 'skills', 'specmint');
   let outFile = join(outDir, `SKILL.${target}.md`);
   mkdirSync(outDir, { recursive: true });
   writeFileSync(outFile, rendered, 'utf-8');
@@ -117,7 +117,7 @@ function renderForClaudeCode(input: string): string {
  * - claude-code：项目级 .claude/skills/<name>/
  */
 function installDirFor(target: SkillTarget): string {
-  const name = 'auto-test';
+  const name = 'specmint';
   if (target === 'codebuddy') return join(process.cwd(), '.codebuddy', 'skills', name);
   return join(process.cwd(), '.claude', 'skills', name);
 }

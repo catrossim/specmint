@@ -73,7 +73,7 @@ export async function runCommand(
     options.grep = items.map((m) => m.name).join('|');
   }
 
-  // --auth 过滤（同时默认 storageState = .auto-test/auth/storage/<auth>.json）
+  // --auth 过滤（同时默认 storageState = .specmint/auth/storage/<auth>.json）
   if (options.authName && !options.grep && !pattern) {
     const items = caseStore.list({ auth: options.authName });
     if (items.length === 0) {
@@ -84,7 +84,7 @@ export async function runCommand(
     options.grep = items.map((m) => m.name).join('|');
   }
   if (options.authName && !options.storageState && !options.noAuth) {
-    options.storageState = `.auto-test/auth/storage/${options.authName}.json`;
+    options.storageState = `.specmint/auth/storage/${options.authName}.json`;
   }
 
   const result = await runTests({

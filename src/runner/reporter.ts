@@ -1,18 +1,18 @@
 /**
  * 自定义 Playwright Reporter。
  *
- * `auto-test init` 的生成配置内联了同一能力的自包含实现，并通过生成的
- * `auto-test-reporter.ts` 入口注册；保留本实现供非 init/包级配置直接复用。
+ * `specmint init` 的生成配置内联了同一能力的自包含实现，并通过生成的
+ * `specmint-reporter.ts` 入口注册；保留本实现供非 init/包级配置直接复用。
  * 默认导出无参构造的 `AutoTestReporter`；运行时依赖通过环境变量注入：
- * - AUTO_TEST_RUN_ID: 当前运行的 ID（由 executor.ts 在 spawn 子进程前写入）
- * - AUTO_TEST_REPORTS_DIR: 当前批次报告目录
- * - AUTO_TEST_CASES_DIR: tests/ 路径（兜底 .auto-test/cases）
+ * - SPECMINT_RUN_ID: 当前运行的 ID（由 executor.ts 在 spawn 子进程前写入）
+ * - SPECMINT_REPORTS_DIR: 当前批次报告目录
+ * - SPECMINT_CASES_DIR: tests/ 路径（兜底 .specmint/cases）
  *
- * 兜底策略：env 缺失时使用与主进程一致的默认路径（.auto-test/*），
- * 让用户在非 auto-test run 触发的场景下也能跑出合理结果，但仍然建议
- * 走 auto-test run 以获取正确的 env 注入。
+ * 兜底策略：env 缺失时使用与主进程一致的默认路径（.specmint/*），
+ * 让用户在非 specmint run 触发的场景下也能跑出合理结果，但仍然建议
+ * 走 specmint run 以获取正确的 env 注入。
  *
- * 执行链路（auto-test run → playwright test 子进程）：
+ * 执行链路（specmint run → playwright test 子进程）：
  *   1. executor 调用 HistoryStore.createRun 生成 runId
  *   2. spawn 子进程，env 写入上述变量
  *   3. reporter 实例在 onTestEnd 更新结果与用例 stats
@@ -51,10 +51,10 @@ let cachedDeps: ReporterDeps | null = null;
  */
 function resolveDeps(): ReporterDeps | null {
   if (cachedDeps) return cachedDeps;
-  const runId = process.env.AUTO_TEST_RUN_ID;
+  const runId = process.env.SPECMINT_RUN_ID;
   if (!runId) return null;
-  const reportsDir = process.env.AUTO_TEST_REPORTS_DIR ?? '.auto-test/reports';
-  const casesDir = process.env.AUTO_TEST_CASES_DIR ?? '.auto-test/cases';
+  const reportsDir = process.env.SPECMINT_REPORTS_DIR ?? '.specmint/reports';
+  const casesDir = process.env.SPECMINT_CASES_DIR ?? '.specmint/cases';
   cachedDeps = {
     runId,
     historyStore: new HistoryStore({ reportsDir }),
@@ -73,7 +73,7 @@ class AutoTestReporter implements Reporter {
     const deps = resolveDeps();
     if (!deps) {
       logger.warn(
-        'AUTO_TEST_RUN_ID 未设置，reporter 不会写回历史（可能是非 auto-test run 触发的）',
+        'SPECMINT_RUN_ID 未设置，reporter 不会写回历史（可能是非 specmint run 触发的）',
       );
     }
   }
@@ -122,7 +122,7 @@ class AutoTestReporter implements Reporter {
 function convertResult(testCase: TestCase, pw: PWTestResult): TestResult {
   // 规范化 caseName 为「组/名称」形式（相对 cases 目录），与 CLI 参数保持一致；
   // cases 目录之外的文件（如 auth/*.setup.ts）退化为文件基名
-  const casesDir = resolve(process.env.AUTO_TEST_CASES_DIR ?? '.auto-test/cases');
+  const casesDir = resolve(process.env.SPECMINT_CASES_DIR ?? '.specmint/cases');
   const file = resolve(testCase.location.file);
   const rel = relative(casesDir, file).replace(/\.spec\.ts$/, '');
   const caseName =

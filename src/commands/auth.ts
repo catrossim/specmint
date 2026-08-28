@@ -2,8 +2,8 @@
  * auth 子命令：管理登录 setup 与 storageState
  *
  * 目录约定（B1 决策）：
- *   .auto-test/auth/<name>.setup.ts
- *   .auto-test/auth/storage/<name>.json
+ *   .specmint/auth/<name>.setup.ts
+ *   .specmint/auth/storage/<name>.json
  *
  * 设计要点：
  * - name 强制 kebab-case
@@ -64,7 +64,7 @@ function validateName(name: string): void {
 }
 
 /**
- * 扫描 .auto-test/auth/*.setup.ts，列出所有 auth 角色。
+ * 扫描 .specmint/auth/*.setup.ts，列出所有 auth 角色。
  */
 export function listAuth(cwd: string = process.cwd()): AuthEntry[] {
   const authDir = join(cwd, STORAGE_LAYOUT.authDir);
@@ -93,7 +93,7 @@ export async function authListCommand(options: AuthListOptions): Promise<void> {
     return;
   }
   if (entries.length === 0) {
-    logger.info('当前未配置 auth（.auto-test/auth/ 为空）。用 `auto-test auth init <name>` 创建。');
+    logger.info('当前未配置 auth（.specmint/auth/ 为空）。用 `specmint auth init <name>` 创建。');
     return;
   }
   for (const e of entries) {
@@ -162,13 +162,13 @@ setup('${name} login', async ({ page }) => {
     return;
   }
   logger.info(`✓ 已生成 ${setupPath}`);
-  logger.info(`  下一步：编辑该文件填入登录步骤，然后运行 \`auto-test auth refresh ${name}\` 生成 storageState`);
+  logger.info(`  下一步：编辑该文件填入登录步骤，然后运行 \`specmint auth refresh ${name}\` 生成 storageState`);
 }
 
 /**
  * auth refresh：单独跑 setup 文件刷新 storageState。
  *
- * 实现：spawn \`npx playwright test --config .auto-test/playwright.config.ts --project=auth-setup --grep "<name>"\`
+ * 实现：spawn \`npx playwright test --config .specmint/playwright.config.ts --project=auth-setup --grep "<name>"\`
  */
 export async function authRefreshCommand(
   name: string,
@@ -180,7 +180,7 @@ export async function authRefreshCommand(
   if (!existsSync(setupPath)) {
     throw new CliError({
       code: ExitCode.NOT_FOUND,
-      message: `找不到 ${setupPath}，请先运行 \`auto-test auth init ${name}\` 或 auth generate`,
+      message: `找不到 ${setupPath}，请先运行 \`specmint auth init ${name}\` 或 auth generate`,
     });
   }
   const { storage } = createStores(cwd);
@@ -188,7 +188,7 @@ export async function authRefreshCommand(
   if (!existsSync(configPath)) {
     throw new CliError({
       code: ExitCode.NOT_FOUND,
-      message: `找不到 ${STORAGE_LAYOUT.configFile}，请先运行 \`auto-test init\``,
+      message: `找不到 ${STORAGE_LAYOUT.configFile}，请先运行 \`specmint init\``,
     });
   }
   const config = loadConfig(cwd);
@@ -277,7 +277,7 @@ async function runAuthGenerate(description: string, options: AuthGenerateOptions
     description,
     name: options.name!,
     url: options.url ?? null,
-    storageStateRel: `.auto-test/auth/storage/${options.name}.json`,
+    storageStateRel: `.specmint/auth/storage/${options.name}.json`,
   });
 
   const session = await createAgentSession({
@@ -292,5 +292,5 @@ async function runAuthGenerate(description: string, options: AuthGenerateOptions
 
   await session.prompt(prompt);
   logger.info(`✓ setup ${options.name} 已生成：${setupPath}`);
-  logger.info(`  下一步：运行 \`auto-test auth refresh ${options.name}\` 生成 storageState`);
+  logger.info(`  下一步：运行 \`specmint auth refresh ${options.name}\` 生成 storageState`);
 }

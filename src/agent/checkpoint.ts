@@ -61,7 +61,7 @@ export interface BatchStateCompletion {
   error?: string;
 }
 
-export const DEFAULT_CHECKPOINT_DIR = '.auto-test/runs';
+export const DEFAULT_CHECKPOINT_DIR = '.specmint/runs';
 
 /**
  * 生成 state id：

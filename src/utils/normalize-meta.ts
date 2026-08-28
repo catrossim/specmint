@@ -90,7 +90,7 @@ export function normalizeModule(v: unknown): string | null {
 }
 
 /**
- * auth 角色名归一化：kebab-case，引用 `.auto-test/auth/<auth>.setup.ts`。
+ * auth 角色名归一化：kebab-case，引用 `.specmint/auth/<auth>.setup.ts`。
  * 失败返回 null（不强行转换）。
  */
 export function normalizeAuth(v: unknown): string | null {

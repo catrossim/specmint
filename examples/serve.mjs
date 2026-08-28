@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * auto-test examples 的静态文件服务器
+ * specmint examples 的静态文件服务器
  *
  * 用法：
  *   node examples/serve.mjs             # 默认 http://localhost:4000

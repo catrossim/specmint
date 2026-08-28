@@ -1,11 +1,11 @@
 /**
- * 包内 Playwright 配置（auto-test 工具内部资源）。
+ * 包内 Playwright 配置（specmint 工具内部资源）。
  *
  * 设计要点：
  * - 严格不用 `__dirname/..` 推断项目根 —— 包内配置位于 dist/runner/，往上两步是
  *   包根而非用户项目根，会让用例静默找不到
- * - 所有用户路径（cases/auth/config）由 executor 通过 AUTO_TEST_* env 注入；
- *   env 缺失时回退 `cwd` + STORAGE_LAYOUT（脱离 auto-test run 直接跑也能用）
+ * - 所有用户路径（cases/auth/config）由 executor 通过 SPECMINT_* env 注入；
+ *   env 缺失时回退 `cwd` + STORAGE_LAYOUT（脱离 specmint run 直接跑也能用）
  * - auth-setup project 仅在检测到 *.setup.ts 时才挂载，根治"占位 setup 失败连坐"
  *   与"无 setup 时跑空"两个独立 bug
  * - runner 段默认 trace='retain-on-failure' / screenshot='only-on-failure' / timeoutMs=30000
@@ -25,7 +25,7 @@ const REPORTER_PATH = resolveFile(
 
 function loadConfig(): AutoTestConfig | null {
   const configPath =
-    process.env.AUTO_TEST_CONFIG_PATH ??
+    process.env.SPECMINT_CONFIG_PATH ??
     join(process.cwd(), STORAGE_LAYOUT.configFile);
   if (!existsSync(configPath)) return null;
   try {
@@ -53,8 +53,8 @@ function buildHeaders(auth: AutoTestConfig['auth'] | undefined): Record<string, 
     out[k] = expandEnv(v, `auth.headers.${k}`);
   }
   for (const [k, v] of Object.entries(process.env)) {
-    if (k.startsWith('AUTO_TEST_HEADER_') && v !== undefined) {
-      const headerName = k.slice('AUTO_TEST_HEADER_'.length)
+    if (k.startsWith('SPECMINT_HEADER_') && v !== undefined) {
+      const headerName = k.slice('SPECMINT_HEADER_'.length)
         .split('_')
         .map((s, i) => (i === 0 ? s : s.charAt(0) + s.slice(1).toLowerCase()))
         .join('-');
@@ -65,8 +65,8 @@ function buildHeaders(auth: AutoTestConfig['auth'] | undefined): Record<string, 
 }
 
 function resolveStorageState(auth: AutoTestConfig['auth'] | undefined): string | undefined {
-  if (process.env.AUTO_TEST_NO_AUTH === '1') return undefined;
-  if (process.env.AUTO_TEST_STORAGE_STATE) return process.env.AUTO_TEST_STORAGE_STATE;
+  if (process.env.SPECMINT_NO_AUTH === '1') return undefined;
+  if (process.env.SPECMINT_STORAGE_STATE) return process.env.SPECMINT_STORAGE_STATE;
   if (!auth?.storageState) return undefined;
   const expanded = expandEnv(auth.storageState, 'auth.storageState');
   return expanded || undefined;
@@ -75,10 +75,10 @@ function resolveStorageState(auth: AutoTestConfig['auth'] | undefined): string |
 function buildUse(auth: AutoTestConfig['auth'] | undefined): Record<string, unknown> {
   const headers = buildHeaders(auth);
   const storageState = resolveStorageState(auth);
-  const channel = process.env.AUTO_TEST_BROWSER_CHANNEL;
+  const channel = process.env.SPECMINT_BROWSER_CHANNEL;
   const cfg = loadConfig();
   return {
-    baseURL: process.env.BASE_URL ?? process.env.AUTO_TEST_BASE_URL ?? 'http://localhost:3000',
+    baseURL: process.env.BASE_URL ?? process.env.SPECMINT_BASE_URL ?? 'http://localhost:3000',
     headless: true,
     trace: resolveTrace(cfg),
     screenshot: resolveScreenshot(cfg),
@@ -90,7 +90,7 @@ function buildUse(auth: AutoTestConfig['auth'] | undefined): Record<string, unkn
 
 function hasSetupFiles(): boolean {
   const authDir =
-    process.env.AUTO_TEST_AUTH_DIR ?? join(process.cwd(), STORAGE_LAYOUT.authDir);
+    process.env.SPECMINT_AUTH_DIR ?? join(process.cwd(), STORAGE_LAYOUT.authDir);
   if (!existsSync(authDir)) return false;
   try {
     return readdirSync(authDir).some((f) => f.endsWith('.setup.ts'));
@@ -102,9 +102,9 @@ function hasSetupFiles(): boolean {
 function buildProjects(auth: AutoTestConfig['auth'] | undefined): Array<Record<string, unknown>> {
   const use = buildUse(auth);
   const casesDir =
-    process.env.AUTO_TEST_CASES_DIR ?? join(process.cwd(), STORAGE_LAYOUT.cases);
+    process.env.SPECMINT_CASES_DIR ?? join(process.cwd(), STORAGE_LAYOUT.cases);
   const authDir =
-    process.env.AUTO_TEST_AUTH_DIR ?? join(process.cwd(), STORAGE_LAYOUT.authDir);
+    process.env.SPECMINT_AUTH_DIR ?? join(process.cwd(), STORAGE_LAYOUT.authDir);
   const hasAuth = hasSetupFiles();
   const projects: Array<Record<string, unknown>> = [];
   if (hasAuth) {
@@ -142,14 +142,14 @@ export default defineConfig({
   projects: buildProjects(cfg?.auth),
   timeout: cfg?.runner?.timeoutMs ?? 30_000,
   outputDir:
-    process.env.AUTO_TEST_OUTPUT_DIR ?? join(process.cwd(), 'test-results'),
+    process.env.SPECMINT_OUTPUT_DIR ?? join(process.cwd(), 'test-results'),
   reporter: [
     ['list'],
     [
       'json',
       {
         outputFile:
-          process.env.AUTO_TEST_JSON_OUTPUT_FILE ??
+          process.env.SPECMINT_JSON_OUTPUT_FILE ??
           join(process.cwd(), 'reports/runs/.tmp/results.json'),
       },
     ],

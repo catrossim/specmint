@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * auto-test CLI 入口
+ * specmint CLI 入口
  *
  * 所有子命令已接入实际实现：
  * - init: 脚手架
@@ -49,13 +49,13 @@ function collectSetParam(value: string, previous: Record<string, string> = {}): 
 }
 
 program
-  .name('auto-test')
+  .name('specmint')
   .description('面向 agent 的 Playwright 页面测试 CLI 工具')
   .version('0.1.0')
   .option('--json', '全局 JSON 输出模式')
   .hook('preAction', (thisCommand) => {
     const opts = thisCommand.opts<{ json?: boolean }>();
-    if (opts.json || process.env.AUTO_TEST_JSON === '1') {
+    if (opts.json || process.env.SPECMINT_JSON === '1') {
       logger.setJsonMode(true);
     }
   });
@@ -139,7 +139,7 @@ program
   )
   .option(
     '--checkpoint <dir>',
-    'checkpoint 目录（默认 .auto-test/runs/）。仅批量模式生效：每条用例完成后增量写 state file，部分失败保留供 --resume 诊断，全部成功自动清理。',
+    'checkpoint 目录（默认 .specmint/runs/）。仅批量模式生效：每条用例完成后增量写 state file，部分失败保留供 --resume 诊断，全部成功自动清理。',
   )
   .option('--no-checkpoint', '禁用 checkpoint 写入（批量模式下默认启用）')
   .option(
@@ -258,7 +258,7 @@ program
 const skillCmd = program.command('skill').description('管理 agent skill 定义');
 skillCmd
   .command('export')
-  .description('在 ./skills/auto-test/ 生成 agent 可加载的 skill 文件')
+  .description('在 ./skills/specmint/ 生成 agent 可加载的 skill 文件')
   .option('--target <target>', '目标 agent：codebuddy | claude-code', 'codebuddy')
   .option('--install', '一键安装到 IDE skill 加载目录（codebuddy: .codebuddy/skills/）')
   .option('--json', '输出 JSON 格式')
@@ -268,7 +268,7 @@ skillCmd
 
 // --- models ---
 // 数据源是 pi-agent ModelRuntime（@earendil-works/pi-coding-agent），
-// auto-test 不维护私有 model 列表。
+// specmint 不维护私有 model 列表。
 const modelsCmd = program
   .command('models')
   .description('管理 agent model（数据源：pi-agent）');
@@ -290,7 +290,7 @@ modelsCmd
   .action(modelsSelectCommand);
 
 // --- auth ---
-// 目录约定：.auto-test/auth/<name>.setup.ts + .auto-test/auth/storage/<name>.json
+// 目录约定：.specmint/auth/<name>.setup.ts + .specmint/auth/storage/<name>.json
 const authCmd = program
   .command('auth')
   .description('管理 auth 角色（setup 文件 + storageState）');
@@ -319,7 +319,7 @@ authCmd
 
 program.parseAsync(process.argv).catch((err: unknown) => {
   if (err instanceof CliError) {
-    if (process.env.AUTO_TEST_JSON === '1') {
+    if (process.env.SPECMINT_JSON === '1') {
       process.stdout.write(JSON.stringify({ ok: false, error: err.toJSON() }) + '\n');
     } else {
       logger.error(err.message);

@@ -6,7 +6,7 @@
  *   2. <runnerDir>/playwright.config.js（dist 态，由 tsc 输出）
  *   3. <runnerDir>/playwright.config.ts（tsx dev 态）
  *
- * 不回退到用户目录的 .auto-test/playwright.config.ts —— 那是历史 init 产物，
+ * 不回退到用户目录的 .specmint/playwright.config.ts —— 那是历史 init 产物，
  * 内联残缺 reporter 会再次触发"onEnd 缺失 → run.json 不 finalize"链式 bug。
  */
 import { existsSync } from 'node:fs';

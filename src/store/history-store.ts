@@ -5,7 +5,7 @@
  *   <reportsDir>/
  *     runs/
  *       <batchId>/
- *         run.json              # auto-test 结构化记录
+ *         run.json              # specmint 结构化记录
  *         results.json          # Playwright JSON reporter 输出
  *         artifacts/            # Playwright outputDir：screenshots / videos / traces
  *
@@ -77,7 +77,7 @@ export class HistoryStore {
 
   /**
    * Playwright outputDir 路径（screenshots / videos / traces）。
-   * 子进程通过 AUTO_TEST_OUTPUT_DIR 环境变量读取。
+   * 子进程通过 SPECMINT_OUTPUT_DIR 环境变量读取。
    */
   artifactsDir(runId: string): string {
     return join(this.runDir(runId), 'artifacts');
@@ -85,7 +85,7 @@ export class HistoryStore {
 
   /**
    * Playwright JSON reporter 输出文件路径。
-   * 子进程通过 AUTO_TEST_JSON_OUTPUT_FILE 环境变量读取。
+   * 子进程通过 SPECMINT_JSON_OUTPUT_FILE 环境变量读取。
    */
   jsonReportPath(runId: string): string {
     return join(this.runDir(runId), 'results.json');

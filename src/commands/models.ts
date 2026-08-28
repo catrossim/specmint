@@ -10,7 +10,7 @@
  * 模型 ID 格式：<providerId>/<modelId>
  *   例如：anthropic/claude-sonnet-latest、openai/gpt-4o
  *
- * 写回配置：通过 fs 直接 patch .auto-test/config.json 的 agent.model 字段
+ * 写回配置：通过 fs 直接 patch .specmint/config.json 的 agent.model 字段
  * 不破坏其他字段。
  */
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
@@ -131,14 +131,14 @@ export async function modelsCurrentCommand(options: ModelsCurrentOptions): Promi
   const sourcePath = config.configPath;
 
   if (options.json) {
-    process.stdout.write(JSON.stringify({ ok: true, current, configPath: sourcePath, fromLegacy: config.fromLegacy }, null, 2) + '\n');
+    process.stdout.write(JSON.stringify({ ok: true, current, configPath: sourcePath }, null, 2) + '\n');
     return;
   }
 
-  process.stdout.write(`configPath: ${sourcePath}${config.fromLegacy ? ' (legacy)' : ''}\n`);
+  process.stdout.write(`configPath: ${sourcePath}\n`);
   process.stdout.write(`model:      ${current ?? '(未指定 → 由 pi-agent 自动选第一个可用)'}\n`);
   if (!current) {
-    process.stdout.write('\n提示：运行 `auto-test models select` 选定一个 model。\n');
+    process.stdout.write('\n提示：运行 `specmint models select` 选定一个 model。\n');
   }
 }
 
@@ -155,7 +155,7 @@ export interface ModelsSelectOptions {
  * 1. 拉取 available model 清单
  * 2. 让用户选 provider
  * 3. 让用户选 model
- * 4. 写回 .auto-test/config.json
+ * 4. 写回 .specmint/config.json
  */
 export async function modelsSelectCommand(options: ModelsSelectOptions): Promise<void> {
   const snap = await snapshotModels({ onlyAvailable: true });
@@ -204,7 +204,7 @@ async function writeModelToConfig(modelId: string): Promise<void> {
   if (!existsSync(configPath)) {
     throw new CliError({
       code: ExitCode.NOT_FOUND,
-      message: `找不到 ${STORAGE_LAYOUT.configFile}，请先运行 auto-test init`,
+      message: `找不到 ${STORAGE_LAYOUT.configFile}，请先运行 specmint init`,
     });
   }
 

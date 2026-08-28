@@ -74,7 +74,7 @@ export async function healCommand(
     throw new CliError({
       code: ExitCode.NOT_FOUND,
       message: `用例 ${caseName} 没有失败记录，无法 heal`,
-      hint: '先用 `auto-test run` 触发一次运行并产生失败',
+      hint: '先用 `specmint run` 触发一次运行并产生失败',
     });
   }
 

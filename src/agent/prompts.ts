@@ -252,7 +252,7 @@ export interface PromptInput {
 export function buildGeneratePrompt(input: PromptInput): string {
   const parts: string[] = [];
 
-  parts.push('你是 auto-test 的 Playwright 用例生成助手。');
+  parts.push('你是 specmint 的 Playwright 用例生成助手。');
   parts.push(
     '任务：根据"用户需求"与上下文（如有）生成可读性好的 .spec.ts 源码，并通过工具调用直接落盘。',
   );
@@ -385,7 +385,7 @@ export function buildHealPrompt(input: {
   selectorPolicy: SelectorPolicy;
 }): string {
   const parts: string[] = [];
-  parts.push('你是 auto-test 的用例修复助手。');
+  parts.push('你是 specmint 的用例修复助手。');
   parts.push(
     '任务：分析失败用例的代码与错误日志，用 update_case 工具覆盖修复。',
   );
@@ -427,7 +427,7 @@ export function buildHealPrompt(input: {
 
 export function buildGenerateSetupPrompt(input: SetupPromptInput): string {
   return [
-    '你是 auto-test 的 auth setup 生成助手。',
+    '你是 specmint 的 auth setup 生成助手。',
     '任务：为 ' + input.name + ' 角色生成 setup.ts',
     '登录页：' + (input.url ?? '从描述推断'),
     'storageState：' + input.storageStateRel,
@@ -462,7 +462,7 @@ export interface ClassifyOutput {
 
 export function buildClassifyPrompt(input: ClassifyInput): string {
   return [
-    '你是 auto-test 的用例元信息分类助手。',
+    '你是 specmint 的用例元信息分类助手。',
     '任务：根据"用户需求"推断 4 个字段：module / group / caseName / summary。',
     '',
     '约束：',

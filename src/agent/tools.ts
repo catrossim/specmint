@@ -300,9 +300,9 @@ const SaveSetupParams = Type.Object({
 });
 
 export interface SetupToolsContext {
-  /** auth setup 目录绝对路径（.auto-test/auth） */
+  /** auth setup 目录绝对路径（.specmint/auth） */
   authDir: string;
-  /** storage 文件绝对路径（.auto-test/auth/storage/<name>.json） */
+  /** storage 文件绝对路径（.specmint/auth/storage/<name>.json） */
   storageStateAbs: string;
   /** PI 推断的登录 URL（写进 meta） */
   url?: string;
@@ -314,7 +314,7 @@ export function createSetupTools(ctx: SetupToolsContext): ToolDefinition[] {
       name: 'save_setup',
       label: 'Save Setup',
       description:
-        '保存 setup 文件到 .auto-test/auth/<name>.setup.ts，并在末尾自动调用 storageState。',
+        '保存 setup 文件到 .specmint/auth/<name>.setup.ts，并在末尾自动调用 storageState。',
       parameters: SaveSetupParams,
       execute: async (_toolCallId, params) => {
         try {

@@ -15,7 +15,7 @@
  * - 不引入新依赖（只用 node:crypto / node:fs），启动期零开销。
  *
  * 缓存目录：
- * - 默认 .auto-test/cache/explore/<key>.json
+ * - 默认 .specmint/cache/explore/<key>.json
  * - 由 config.explore.cache.dir 覆盖
  */
 import { createHash } from 'node:crypto';
@@ -169,12 +169,12 @@ export function writeExploreCache(
   }
 }
 
-/** 默认缓存目录：.auto-test/cache/explore */
-export const DEFAULT_EXPLORE_CACHE_DIR = '.auto-test/cache/explore';
+/** 默认缓存目录：.specmint/cache/explore */
+export const DEFAULT_EXPLORE_CACHE_DIR = '.specmint/cache/explore';
 
 /**
- * 列出某目录下所有缓存文件的轻量元数据，便于做 `auto-test explore cache list` /
- * `auto-test explore cache clear` 之类的诊断命令（暂不实现 CLI，留口子）。
+ * 列出某目录下所有缓存文件的轻量元数据，便于做 `specmint explore cache list` /
+ * `specmint explore cache clear` 之类的诊断命令（暂不实现 CLI，留口子）。
  */
 export interface CacheFileMeta {
   key: string;

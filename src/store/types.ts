@@ -92,7 +92,7 @@ export interface CaseMeta {
   linkedTickets?: string[];
   /**
    * 关联的 auth 角色名（阶段 2 引入）。
-   * 引用 `.auto-test/auth/<auth>.setup.ts`；未设置表示公开页 / 无登录需求。
+   * 引用 `.specmint/auth/<auth>.setup.ts`；未设置表示公开页 / 无登录需求。
    * list / run 时可按 --auth <name> 过滤。
    */
   auth?: string;

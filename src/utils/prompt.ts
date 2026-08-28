@@ -8,13 +8,13 @@
  *
  * 行为约定：
  * - 非 TTY（CI / pipe / redirect）时返回默认值，不阻塞
- * - 环境变量 `AUTO_TEST_NO_INTERACTIVE=1` 强制跳过
+ * - 环境变量 `SPECMINT_NO_INTERACTIVE=1` 强制跳过
  * - EOF（Ctrl-D / Ctrl-C）视作"使用默认值"
  */
 import { createInterface } from 'node:readline';
 
 function isInteractive(): boolean {
-  if (process.env.AUTO_TEST_NO_INTERACTIVE === '1') return false;
+  if (process.env.SPECMINT_NO_INTERACTIVE === '1') return false;
   if (!process.stdin.isTTY) return false;
   if (!process.stdout.isTTY) return false;
   return true;
