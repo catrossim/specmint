@@ -23,7 +23,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { dirname, join, relative as pathRelative, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative as pathRelative, resolve } from 'node:path';
 import { CliError, ExitCode } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
 import { normalizeCaseMeta, normalizeTags } from '../utils/normalize-meta.js';
@@ -39,6 +39,52 @@ import type {
 
 const KEBAB_CASE_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 const MAX_NAME_LENGTH = 80;
+
+/**
+ * 匹配 `import ... from "<path>"` 或 `export ... from "<path>"`，
+ * 注意只取首个引号串形式的 from 子句；副作用 import（无 from）不在内。
+ */
+const SPEC_IMPORT_FROM_RE = /((?:^|\n)\s*(?:import|export)\s+(?:[^'"\n;]+?\s+from\s+)?)(['"])([^'"\n]+?)\2/g;
+
+/**
+ * 对 spec.ts 源码做「POM 导入路径规范化」。
+ *
+ * 背景：POM 物理位置在 <casesDir>/pages/<sub>.page.ts，而 spec.ts 位于
+ * <casesDir>/<group>/<sub>.spec.ts（在 group 子目录下），因此 import 必须写
+ * 相对 spec.ts 自身目录的路径，并强制带 `.ts` 后缀（ESM 模式下 Node 强制要求）。
+ *
+ * LLM 经常写错，如 `./pages/<sub>.page` 或省略扩展名。本函数做兜底：
+ * - 扫描所有 `import/export ... from '...'` 中的相对路径；
+ * - 解析为绝对路径后，若与 POM 路径（去扩展名）一致，则统一改写为
+ *   「相对 specDir + 带 .ts 后缀」的规范路径；
+ * - 其余非 POM 的第三方/工具 import 完全不动。
+ *
+ * @returns 改写后的源代码与是否发生过重写
+ */
+function rewriteSpecImports(
+  specCode: string,
+  specDirAbs: string,
+  pomAbsoluteFile: string,
+): { code: string; changed: boolean } {
+  const pomNoExt = pomAbsoluteFile.replace(/\.[A-Za-z]+$/, '');
+  const desiredRel = pathRelative(specDirAbs, pomAbsoluteFile).replace(/\\/g, '/');
+  let changed = false;
+
+  const replaced = specCode.replace(
+    SPEC_IMPORT_FROM_RE,
+    (m: string, head: string, quote: string, p: string): string => {
+      if (!p) return m;
+      if (!(p.startsWith('.') || p.startsWith('/'))) return m;
+      const abs = isAbsolute(p) ? p : resolve(specDirAbs, p);
+      const absNoExt = abs.replace(/\.[A-Za-z]+$/, '');
+      if (absNoExt !== pomNoExt) return m;
+      changed = true;
+      return `${head}${quote}${desiredRel}${quote}`;
+    },
+  );
+
+  return { code: replaced, changed };
+}
 
 export interface CaseStoreOptions {
   /** 用例库根目录（绝对路径或相对 cwd）。createStores 总会传入。 */
@@ -342,16 +388,33 @@ export class CaseStore {
     const specFile = this.specPath(input.name);
     const metaFile = this.metaPath(input.name);
     let pageObjectPathResult: string | null = null;
+    let normalizedSpecCode = specCode;
+
+    // 兜底：spec.ts 落盘前对 POM import 路径做规范化（见 rewriteSpecImports 注释）
+    let pomAbsoluteFile: string | null = null;
+    if (input.pageObject?.enabled && input.pageObject.code && input.pageObject.file) {
+      pomAbsoluteFile = resolve(this.casesDir, input.pageObject.file);
+      const rewriteResult = rewriteSpecImports(
+        normalizedSpecCode,
+        dirname(specFile),
+        pomAbsoluteFile,
+      );
+      normalizedSpecCode = rewriteResult.code;
+      if (rewriteResult.changed) {
+        logger.warn(
+          `[case:${input.name}] spec.ts 中 POM import 路径已自动规范化（ESM 路径错位或缺扩展名）`,
+        );
+      }
+    }
 
     try {
-      writeFileSync(specFile, specCode, 'utf-8');
+      writeFileSync(specFile, normalizedSpecCode, 'utf-8');
       writeFileSync(metaFile, JSON.stringify(meta, null, 2) + '\n', 'utf-8');
 
-      if (input.pageObject?.enabled && input.pageObject.code && input.pageObject.file) {
-        const pomFile = resolve(this.casesDir, input.pageObject.file);
-        ensureDir(dirname(pomFile));
-        writeFileSync(pomFile, input.pageObject.code, 'utf-8');
-        pageObjectPathResult = pomFile;
+      if (pomAbsoluteFile !== null && input.pageObject?.code) {
+        ensureDir(dirname(pomAbsoluteFile));
+        writeFileSync(pomAbsoluteFile, input.pageObject.code, 'utf-8');
+        pageObjectPathResult = pomAbsoluteFile;
       }
     } catch (err) {
       // 失败时清理半成品
@@ -437,9 +500,30 @@ export class CaseStore {
     }
 
     try {
-      writeFileSync(this.specPath(name), specCode, 'utf-8');
+      // 兜底：spec.ts 落盘前对 POM import 路径做规范化（与 save() 一致）
+      let normalizedSpecCode = specCode;
+      const targetPomFile: string | null = pageObject
+        ? resolve(this.casesDir, pageObject.file)
+        : meta.pageObject.file
+        ? resolve(this.casesDir, meta.pageObject.file)
+        : null;
+      if (targetPomFile) {
+        const rewriteResult = rewriteSpecImports(
+          normalizedSpecCode,
+          dirname(this.specPath(name)),
+          targetPomFile,
+        );
+        normalizedSpecCode = rewriteResult.code;
+        if (rewriteResult.changed) {
+          logger.warn(
+            `[case:${name}] spec.ts 中 POM import 路径已自动规范化（ESM 路径错位或缺扩展名）`,
+          );
+        }
+      }
+
+      writeFileSync(this.specPath(name), normalizedSpecCode, 'utf-8');
       if (pageObject) {
-        const pomFile = resolve(this.casesDir, pageObject.file);
+        const pomFile = targetPomFile as string;
         ensureDir(dirname(pomFile));
         writeFileSync(pomFile, pageObject.code, 'utf-8');
       }

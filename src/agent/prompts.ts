@@ -355,7 +355,32 @@ export function buildGeneratePrompt(input: PromptInput): string {
     parts.push('   - group: 与 name 前缀一致（CLI --group 显式传值时原样使用）');
     parts.push('   - module: 模块中文名（CLI --module 显式传值时原样使用）');
     if (input.pageObjectEnabled) {
-      parts.push('   - pageObject: { file: "./pages/<sub-name>.page.ts", code: "..." }');
+      parts.push(
+        '   - pageObject: { file: "./pages/<sub-name>.page.ts", code: "..." }',
+      );
+      parts.push('');
+      parts.push(
+        '【路径与扩展名硬约束 - 必须严格遵守，否则运行时无法解析 POM】',
+      );
+      parts.push(
+        '- 本用例的 spec.ts 实际位于 <casesDir>/<group>/<sub>.spec.ts（在 group 子目录下）',
+      );
+      parts.push(
+        '- POM 实际位于 <casesDir>/pages/<sub>.page.ts（位于 casesDir/pages/）',
+      );
+      parts.push(
+        '- 因此 spec.ts 中必须用 "相对自身" 路径 import POM，形如：',
+      );
+      parts.push("      import { FooPage } from '../pages/<sub-name>.page.ts';");
+      parts.push(
+        '- 必须带 `.ts` 后缀（ESM 模式下 Node 模块解析强制要求完整扩展名，Playwright 不会自动补）',
+      );
+      parts.push(
+        '- 严禁写成 "./pages/..." 或无扩展名 "./pages/<sub>.page"，会在运行时报',
+      );
+      parts.push(
+        '      Error: Cannot find module ".../<sub>.page" imported from .../<group>/<sub>.spec.ts',
+      );
     }
     if (input.cliModule || input.cliGroup) {
       parts.push('   注意：CLI 已显式指定 module / group，请原样使用不要改写');
