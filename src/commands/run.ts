@@ -21,6 +21,8 @@ export interface RunOptions {
   authName?: string;
   /** CLI --no-auth */
   noAuth?: boolean;
+  /** CLI --config <path>：显式指定自定义 Playwright 配置（默认走包内） */
+  configPath?: string;
   json?: boolean;
   /** CLI --label <slug>：批次语义标签 */
   label?: string;
@@ -94,10 +96,13 @@ export async function runCommand(
     workers: Number.isFinite(workers) ? workers : undefined,
     retries: Number.isFinite(retries) ? retries : undefined,
     grep: options.grep,
-    runnerConfigPath: storage.runnerConfigPath,
+    runnerConfigPath: options.configPath,
     cwd,
     casesDir: storage.casesDir,
     reportsDir: storage.reportsDir,
+    configPath: storage.configPath,
+    authDir: storage.authDir,
+    config,
     auth: {
       headers: options.header && options.header.length > 0 ? options.header : undefined,
       storageState: options.storageState,

@@ -35,3 +35,6 @@ test-results/
 .auto-test/reports/runs/
 .auto-test/cache/
 .auto-test/.env
+
+# examples
+examples/.auto-test

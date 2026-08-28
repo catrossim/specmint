@@ -68,6 +68,24 @@ export interface AutoTestConfig {
     defaultBrowser: string;
     trace: string;
     screenshot: string;
+    /** 单用例超时（毫秒），默认 30000。映射到 Playwright `timeout`。 */
+    timeoutMs?: number;
+    /**
+     * 浏览器通道：解决内网/受限环境无法下载 Playwright 自带 chromium 的痛点。
+     * - `auto`（默认）：检测链 chromium → 系统 Chrome → 系统 Edge
+     * - `chromium`：强制用 Playwright 自带（未下载会报错）
+     * - `chrome` / `msedge`：强制用对应系统浏览器
+     */
+    browserChannel: 'auto' | 'chromium' | 'chrome' | 'msedge';
+    /**
+     * 被测目标 baseURL，注入到 Playwright `use.baseURL`。
+     *
+     * 优先级（env 最高，符合 12-factor）：
+     *   process.env.BASE_URL > process.env.AUTO_TEST_BASE_URL > runner.baseURL > 'http://localhost:3000'
+     *
+     * 支持 `${ENV_VAR}` 展开（与 auth.storageState 一致）。
+     */
+    baseURL?: string;
   };
   /**
    * 鉴权 / 注入配置（落到 Playwright `extraHTTPHeaders` + `storageState`）。
@@ -135,8 +153,10 @@ export const DEFAULT_CONFIG: AutoTestConfig = {
   },
   runner: {
     defaultBrowser: 'chromium',
-    trace: 'on-first-retry',
+    trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
+    timeoutMs: 30_000,
+    browserChannel: 'auto',
   },
 };
 

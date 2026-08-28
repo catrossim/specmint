@@ -18,11 +18,51 @@ triggers:
 
 **项目布局**：所有产物（含两个配置）在 `.auto-test/` 下，项目根零污染。**不可改路径**。
 
+## 前置依赖校验（先检查再安装）
+
+**核心原则**：执行任何 `npm install` 或 `npx playwright install` 之前，**必须先校验当前环境是否已经满足**。已满足时直接跳过安装，不要重复下载。
+
+### Playwright npm 包校验
+
+```bash
+# 已安装：打印版本号（如 1.49.0）；未安装：command not found / 报错
+npx playwright --version
+
+# 等价的 require 方式（更稳定，不依赖 PATH）
+node -e "require.resolve('playwright')" 2>/dev/null && echo "playwright: OK" || echo "playwright: MISSING"
+```
+
+### Chromium 浏览器校验
+
+v2.3+ `runner.browserChannel: "auto"`（默认）会自动检测链：Playwright chromium → 系统 Chrome → 系统 Edge。**内网/受限环境无需任何额外配置**——auto 模式会回退到已安装的系统浏览器。
+
+Playwright 把浏览器下载到独立的缓存目录，不需要每个项目都装一遍：
+
+```bash
+# macOS / Linux：列出已下载的浏览器版本目录
+ls ~/.cache/ms-playwright/ 2>/dev/null | grep -E '^chromium-[0-9]+$' && echo "chromium: OK" || echo "chromium: MISSING"
+
+# Windows PowerShell：
+# Get-ChildItem "$env:LOCALAPPDATA\ms-playwright\" -Directory |
+#   Where-Object { $_.Name -like "chromium-*" } | Select-Object -ExpandProperty Name
+```
+
+### 决策表
+
+| 校验结果 | 处理动作 |
+|---------|---------|
+| `playwright: OK` **且** `chromium: OK` | 直接进入 `auto-test init` / `generate` / `run`，**跳过安装** |
+| `playwright: MISSING` | `npm install`（项目根）补齐 npm 依赖 |
+| `chromium: MISSING` 但 playwright 在 | v2.3+ 直接进入 `auto-test init`；auto 模式会回退系统 Chrome/Edge；如想下载则 `npx playwright install chromium` |
+| 都缺失 | 先 `npm install`；auto 模式仍可继续；如想下载再 `npx playwright install chromium`，或装系统 Chrome/Edge |
+
+> **绝对不要**在未校验前就盲目执行 `npm install` 或 `npx playwright install chromium`——v2.3+ 这两个命令对 auto 模式已非必需；只有用户明确想要 Playwright 自带 chromium 时才需要。
+
 ## 子命令
 
 ### 项目初始化
 
-- `init` — 创建 `.auto-test/{cases,auth,reports}` + 渲染两个配置文件
+- `init` — 创建 `.auto-test/{cases,auth,reports,cache}` 目录结构 + 写入 `config.json`；v2.3+ **不再生成** `.auto-test/playwright.config.ts` 与 `.auto-test/auto-test-reporter.ts`（由包内配置 `dist/runner/playwright.config.{js,ts}` 接管）
 
 ### 模型选择（数据源：pi-agent）
 
@@ -57,7 +97,14 @@ triggers:
 
 ## 调用样例
 
+> **调用前的硬性步骤**：执行 `auto-test` 任何子命令前，**先按上文"前置依赖校验"section 跑一遍校验**。校验通过时直接进入下方流程，不要重复执行 `npm install` 或 `npx playwright install chromium`。
+
 ```bash
+# 0. 前置依赖校验（仅在未通过时执行对应安装命令；已通过则跳过）
+npx playwright --version && \
+ls ~/.cache/ms-playwright/ 2>/dev/null | grep -qE '^chromium-[0-9]+$' || \
+  { echo "依赖缺失，按上文决策表补装"; npm install && npx playwright install chromium; }
+
 # 1. 初始化项目
 auto-test init
 
@@ -191,10 +238,14 @@ YYYY-MM-DD_HHMMSS[-<slug>]
 └── artifacts/              # Playwright outputDir（screenshots/videos/traces）
 ```
 
-**子进程 env**：executor 在 spawn playwright CLI 前注入两个变量，`playwright.config.ts` 模板读它们决定 outputDir / JSON 落点：
+**子进程 env（v2.3+）**：executor 通过 `src/runner/spawn-env.ts` 统一注入，包内 `playwright.config.ts` 消费。run / rerun / auth refresh 三入口协议一致：
 
-- `AUTO_TEST_OUTPUT_DIR` → `runs/<batchId>/artifacts`
-- `AUTO_TEST_JSON_OUTPUT_FILE` → `runs/<batchId>/results.json`
+- `AUTO_TEST_CASES_DIR` / `AUTO_TEST_AUTH_DIR` / `AUTO_TEST_CONFIG_PATH` → 用户路径（绝对）
+- `AUTO_TEST_OUTPUT_DIR` / `AUTO_TEST_JSON_OUTPUT_FILE` → 批次产物落点
+- `AUTO_TEST_RUN_ID` / `AUTO_TEST_REPORTS_DIR` → reporter 收尾
+- `BASE_URL` → `AUTO_TEST_BASE_URL ?? 'http://localhost:3000'`（修 P0-1：executor 显式透传）
+- `AUTO_TEST_BROWSER_CHANNEL` → `auto` 检测后的 `chrome` / `msedge`（未回退则不设）
+- `AUTO_TEST_HEADER_*` / `AUTO_TEST_STORAGE_STATE` / `AUTO_TEST_NO_AUTH` → 鉴权注入
 
 **`--label` 校验**：kebab-case（`^[a-z][a-z0-9-]*[a-z0-9]$`），长度 1–32。`smoke` / `p0-regression` / `nightly-batch-2` 都是合法 slug。
 

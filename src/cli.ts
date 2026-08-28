@@ -184,6 +184,10 @@ program
     '批次语义标签（kebab-case，1-32 字符），会拼到批次号末尾，例如 --label smoke → 2026-08-27_150059-smoke',
   )
   .option('--json', '输出 JSON 格式')
+  .option(
+    '--config <path>',
+    '显式指定自定义 Playwright 配置文件（高级选项；默认走包内配置 dist/runner/playwright.config.{js,ts}）',
+  )
   .action(runCommand);
 
 // --- rerun ---

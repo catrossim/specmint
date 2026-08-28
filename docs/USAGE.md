@@ -11,14 +11,12 @@ my-project/
 ├── .gitignore                         # init 追加 .auto-test/reports/ 等规则
 └── .auto-test/                         # auto-test 全部产物
     ├── config.json                    # 项目配置（位置不可改）
-    ├── playwright.config.ts           # Playwright 配置（位置不可改）
     ├── cases/                          # 用例库（递归支持 group/）
     │   ├── auth/login-success.spec.ts
     │   └── auth/login-success.meta.json
     ├── cases/pages/                    # POM
-    ├── auth/                           # 登录态子系统
-    │   ├── admin.setup.ts              # 登录流程
-    │   └── storage/admin.json          # storageState（gitignore）
+    ├── auth/                           # 登录态子系统（按需生成 setup 文件）
+    │   └── storage/<name>.json         # storageState（gitignore）
     ├── cache/                          # v2.1+ 探索快照缓存（gitignore）
     │   └── explore/<hash>.json         # key = hash(URL + storageState)
     └── reports/                        # 运行产物（gitignore）
@@ -26,6 +24,8 @@ my-project/
             ├── run.json                # auto-test 结构化记录
             ├── results.json            # Playwright JSON reporter 输出
             └── artifacts/              # Playwright outputDir（screenshots/videos/traces）
+
+> **包内配置接管（v2.2+）**：Playwright 配置不再生成于用户项目，统一在 `dist/runner/playwright.config.{js,ts}` 内由 auto-test 自带。`.auto-test/` 仅保留用户资产。深度自定义走 `auto-test run --config <path>`。
 ```
 
 **为什么不能改路径**：
@@ -78,8 +78,10 @@ my-project/
   },
   "runner": {
     "defaultBrowser": "chromium",
-    "trace": "on-first-retry",
-    "screenshot": "only-on-failure"
+    "trace": "retain-on-failure",
+    "screenshot": "only-on-failure",
+    "timeoutMs": 30000,
+    "browserChannel": "auto"
   },
   "auth": {
     "headers": { "X-Tenant": "qa" },
@@ -96,7 +98,12 @@ my-project/
 |------|------|------|
 | `agent.model` | 否 | pi-agent model id。未设时自动选第一个 available。 |
 | `agent.delegate` | 否 | `sdk` \| `cli`，默认 `sdk` |
-| `runner.defaultBrowser` | 否 | `chromium` \| `firefox` \| `webkit` |
+| `runner.defaultBrowser` | 否 | `chromium`（v2.2+ 限定，扩展浏览器类型见 roadmap） |
+| `runner.trace` | 否 | `retain-on-failure`（默认）/ `on-first-retry` / `off` —— 控制失败 trace 落盘策略 |
+| `runner.screenshot` | 否 | `only-on-failure`（默认）/ `on` / `off` |
+| `runner.timeoutMs` | 否 | 单用例超时（毫秒），默认 `30000` |
+| `runner.browserChannel` | 否 | `auto`（默认，chromium→chrome→msedge 自动回退）/ `chromium` / `chrome` / `msedge` —— 解决内网无法下载 chromium |
+| `runner.baseURL` | 否 | 被测目标 baseURL，注入到 Playwright `use.baseURL`。支持 `${ENV_VAR}` 展开。env 优先于本字段（`BASE_URL` / `AUTO_TEST_BASE_URL` > `runner.baseURL` > `http://localhost:3000`） |
 | `auth.headers` | 否 | 注入到 Playwright `extraHTTPHeaders` |
 | `auth.extraHTTPHeaders` | 否 | 同 `headers`，两者合并 |
 | `auth.cookies` | 否 | cookie 列表（schema 预留，阶段 2 完整支持） |
@@ -298,18 +305,23 @@ auto-test auth generate "管理员登录：admin/admin123，登录成功跳转 d
 auto-test auth refresh admin
 ```
 
-### Playwright 自动配置
+### Playwright 自动配置（v2.2+）
 
-`init` 渲染的 `.auto-test/playwright.config.ts` 自动拆 projects：
+Playwright 配置由 auto-test 包内自带（`dist/runner/playwright.config.{js,ts}`），**不再生成于用户目录**。
+executor 通过 `import.meta.url` 定位并 `--config` 指向它，所有用户路径通过 `AUTO_TEST_*` env 注入。
+
+projects 结构（动态挂载）：
 
 ```typescript
-projects: [
-  { name: 'auth-setup', testMatch: /\.setup\.ts$/, testDir: './auth' },
-  { name: 'e2e', testDir: './cases', dependencies: ['auth-setup'], use: { ... } }
-]
+// 检测到 *.setup.ts 时才挂 auth-setup project，连同 chromium 一起跑
+projects: hasSetupFiles
+  ? [{ name: 'auth-setup', testMatch: /\.setup\.ts$/, testDir: '.auto-test/auth' },
+     { name: 'chromium', testDir: '.auto-test/cases', dependencies: ['auth-setup'] }]
+  : [{ name: 'chromium', testDir: '.auto-test/cases' }]
 ```
 
-`auth-setup` project 在没有 `*.setup.ts` 时是空的，被 Playwright 跳过。写了 setup 文件即自动生效。
+`auth-setup` project 仅在存在 setup 文件时挂载（根治两个独立 bug：占位 setup 失败连坐 / 无 setup 时跑空）。
+写了 setup文件即自动生效；按需用 `auto-test auth init <name>` 生成。
 
 ### 用例关联 auth
 
@@ -433,16 +445,26 @@ YYYY-MM-DD_HHMMSS[-<slug>]
     └── <test-name>-.../
 ```
 
-### 子进程 env 注入
+### 子进程 env 注入（v2.2+）
 
-executor 在 spawn `playwright test` 前会注入两个环境变量：
+executor 在 spawn `playwright test` 前注入完整 env 协议（**统一收口于 `src/runner/spawn-env.ts`，run/rerun/auth refresh 三入口共用**）：
 
-| env | 值 |
-|-----|----|
-| `AUTO_TEST_OUTPUT_DIR` | `.auto-test/reports/runs/<batchId>/artifacts` |
-| `AUTO_TEST_JSON_OUTPUT_FILE` | `.auto-test/reports/runs/<batchId>/results.json` |
+| env | 值 | 用途 |
+|-----|----|------|
+| `AUTO_TEST_CASES_DIR` | `.auto-test/cases`（绝对路径） | 用例目录 |
+| `AUTO_TEST_AUTH_DIR` | `.auto-test/auth`（绝对路径） | 登录态 setup 目录 |
+| `AUTO_TEST_CONFIG_PATH` | `.auto-test/config.json`（绝对路径） | 包内配置读取 |
+| `AUTO_TEST_OUTPUT_DIR` | `.auto-test/reports/runs/<batchId>/artifacts` | trace/screenshot 落点 |
+| `AUTO_TEST_JSON_OUTPUT_FILE` | `.auto-test/reports/runs/<batchId>/results.json` | JSON reporter 输出 |
+| `AUTO_TEST_RUN_ID` | `<batchId>` | reporter 收尾 |
+| `AUTO_TEST_REPORTS_DIR` | `.auto-test/reports`（绝对路径） | reporter history store |
+| `BASE_URL` | `AUTO_TEST_BASE_URL ?? AUTO_TEST_BASE_URL ?? 'http://localhost:3000'` | 修 P0-1：透传给子进程 |
+| `AUTO_TEST_BROWSER_CHANNEL` | `auto` 检测后的回退结果（`chrome` / `msedge`，未回退则不设） | 浏览器通道 |
+| `AUTO_TEST_HEADER_*` | `--header K=V` 注入 | 鉴权头部 |
+| `AUTO_TEST_STORAGE_STATE` | `--storage-state` 路径 | 登录态注入 |
+| `AUTO_TEST_NO_AUTH` | `1`（当 `--no-auth`） | 跳过 storageState |
 
-`playwright.config.ts` 模板（`init` 生成）从这两个 env 决定 outputDir 和 JSON reporter 的输出位置。env 缺失时回退到 `./test-results` / `./reports/runs/.tmp/results.json`（不推荐，会污染项目根）。
+env 缺失时统一回退 `cwd/.auto-test/*`（不依赖 `__dirname`，npx 安装与 dist 状态行为一致）。
 
 ### `--label` 校验
 

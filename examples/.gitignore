@@ -1,0 +1,6 @@
+# auto-test
+.auto-test/reports/runs/
+.auto-test/.env
+.auto-test/cache/
+test-results/
+playwright-report/

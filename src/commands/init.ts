@@ -2,19 +2,19 @@
  * init 子命令：在当前目录初始化 auto-test 项目
  *
  * 职责：
- * 1. 创建 .auto-test/ 目录结构（cases、cases/pages、reports、reports/runs）
- * 2. 渲染 .auto-test/config.json（不可写到项目根，避免污染）
- * 3. 渲染 .auto-test/playwright.config.ts（同上）
- * 4. 追加 .gitignore 条目（幂等）
+ * 1. 创建 .auto-test/ 目录结构（cases、cases/pages、reports、reports/runs、auth、cache）
+ * 2. 写入 .auto-test/config.json（默认 runner.timeoutMs / browserChannel 等）
+ * 3. 检测历史 init 产物（旧 .auto-test/playwright.config.ts / auto-test-reporter.ts / 占位 setup）
+ *    如存在且非空，提示用户可手动删除（不影响运行，因为包内配置已接管）
+ * 4. 幂等追加 .gitignore 条目
  * 5. 打印下一步建议
  *
- * 任务 1+ 改造要点：
- * - 强制 .auto-test/ 隐藏目录 + 强制两个配置文件都在 .auto-test/ 下
- * - 项目根零污染——不创建 tests/、src/、auto-test.config.json、playwright.config.ts
- * - storage / runner.configPath 不再支持配置（直接忽略老字段）
- *
- * 不做 npm install / npx playwright install —— 这些需要外部副作用，
- * 由用户自行执行，避免 init 子命令网络/系统依赖。
+ * 设计：
+ * - 不再生成 .auto-test/playwright.config.ts 与 auto-test-reporter.ts —— 这些是包内部资源，
+ *   由 dist/runner/playwright.config.{js,ts} 与 dist/runner/reporter.js 提供
+ * - 不再生成 .auto-test/auth/admin.setup.ts 占位 —— 用户需要时跑 `auto-test auth init <name>`
+ *   自助生成，避免占位文件失败连坐真实用例
+ * - 不做 npm install / npx playwright install —— 这些需要外部副作用，由用户自行执行
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -22,9 +22,6 @@ import { logger } from '../utils/logger.js';
 import { STORAGE_LAYOUT } from '../config.js';
 import { CliError, ExitCode } from '../utils/errors.js';
 
-/**
- * .auto-test 内部目录树（init 时一并创建）
- */
 const DEFAULT_DIRECTORIES = [
   '.auto-test',
   '.auto-test/cases',
@@ -40,15 +37,12 @@ const DEFAULT_DIRECTORIES = [
 /**
  * 默认 .auto-test/config.json 内容
  *
- * 注意：
- * - 不写 storage 段（路径不可配置）
- * - 不写 runner.configPath（强制 .auto-test/playwright.config.ts）
- * - 用户可在这里改 model / defaultBrowser / agent 等其他字段
+ * 用户可改：model（auto-test models select）、defaultBrowser / auth / agent 等其他字段
+ * 不应改：version（schema 版本）、storage 段（路径不可配置）
  */
 const DEFAULT_CONFIG_OBJECT = {
   version: '1',
   agent: {
-    // model 不写默认值——由 `auto-test models select` 选定
     delegate: 'sdk' as const,
     systemPromptAdditions: '',
   },
@@ -70,132 +64,45 @@ const DEFAULT_CONFIG_OBJECT = {
   },
   runner: {
     defaultBrowser: 'chromium',
-    trace: 'on-first-retry' as const,
+    /** 默认 retain-on-failure：heal 时 LLM 可结合页面现场定位。 */
+    trace: 'retain-on-failure' as const,
     screenshot: 'only-on-failure' as const,
+    /** 单用例超时（毫秒），默认 30s */
+    timeoutMs: 30_000,
+    /**
+     * 浏览器通道：解决内网/受限环境无法下载 Playwright chromium 的痛点
+     * - `auto`（默认）：chromium → chrome → msedge 检测链
+     * - `chromium` / `chrome` / `msedge`：显式固定
+     */
+    browserChannel: 'auto' as const,
   },
 };
 
 const GITIGNORE_ADDITIONS = [
-  '.auto-test/reports/runs/', // 运行产物（含 run.json / artifacts / results.json）
+  '.auto-test/reports/runs/',
   '.auto-test/.env',
-  '.auto-test/cache/', // 探索快照缓存，可重新生成
-  // 项目根兜底：playwright.config.ts 缺失 env 时默认会写这里
+  '.auto-test/cache/',
   'test-results/',
   'playwright-report/',
 ];
 
 /**
- * .auto-test/playwright.config.ts 模板
- *
- * 注意 testDir 用相对 __dirname 的形式（该文件位于 .auto-test/ 下），
- * 写 './cases' 即可；reporter 输出也用相对路径。
- *
- * 关于 auth：
- * - 读取同目录的 config.json 的 auth 段（headers / extraHTTPHeaders / cookies / storageState）
- * - 字段值里的 ${ENV_VAR} 自动展开（CI 注入）
- * - 进程环境变量 AUTO_TEST_HEADER_<KEY>=V 会覆盖对应 header（auto-test run --header 透传）
- * - AUTO_TEST_STORAGE_STATE=<path> 覆盖 storageState
- * - AUTO_TEST_NO_AUTH=1 跳过 storageState（公开页测试）
- *
- * 关于 projects：
- * - 默认拆 auth-setup + e2e 两个 project；auth-setup 在没有 *.setup.ts 时是空 project，被跳过
- * - 用户写 .auto-test/auth/*.setup.ts 即自动生效（无需再改本 config）
+ * 历史 init 产物（包内配置接管后不再生成；旧产物不会自动删，给用户提示）
  */
-const PLAYWRIGHT_CONFIG_BODY = `import { defineConfig } from '@playwright/test';
-import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-/** 读同目录 config.json 的 auth 段。文件不存在则返回空对象。 */
-function loadAuth() {
-  try {
-    const raw = JSON.parse(readFileSync(join(__dirname, 'config.json'), 'utf-8'));
-    return raw.auth ?? {};
-  } catch {
-    return {};
-  }
-}
-
-/** 展开字符串里的 \${ENV_VAR}。未设置时 warning + 空串（fail-fast 让 CI 知道是配置问题）。 */
-function expandEnv(value, source) {
-  if (typeof value !== 'string' || !value.includes('\${')) return value;
-  return value.replace(/\\\${([A-Z_][A-Z0-9_]*)}/g, (_, name) => {
-    const v = process.env[name];
-    if (v === undefined) console.warn('[playwright.config] ' + source + ' 中 \$' + '{' + name + '} 未设置，使用空串');
-    return v ?? '';
-  });
-}
-
-/** 合并 config.auth.headers + extraHTTPHeaders + AUTO_TEST_HEADER_* env。 */
-function buildHeaders() {
-  const auth = loadAuth();
-  const out = {};
-  const headersFromConfig = { ...(auth.headers ?? {}), ...(auth.extraHTTPHeaders ?? {}) };
-  for (const [k, v] of Object.entries(headersFromConfig)) {
-    out[k] = expandEnv(v, 'auth.headers.' + k);
-  }
-  // CLI flag 通过 AUTO_TEST_HEADER_<KEY>=V 注入；key 转回 kebab-case（如 X_TENANT -> X-Tenant）
-  for (const [k, v] of Object.entries(process.env)) {
-    if (k.startsWith('AUTO_TEST_HEADER_') && v !== undefined) {
-      const headerName = k.slice('AUTO_TEST_HEADER_'.length).split('_').map((s, i) =>
-        i === 0 ? s : s.charAt(0) + s.slice(1).toLowerCase()
-      ).join('-');
-      out[headerName] = v;
-    }
-  }
-  return out;
-}
-
-function resolveStorageState() {
-  if (process.env.AUTO_TEST_NO_AUTH === '1') return undefined;
-  if (process.env.AUTO_TEST_STORAGE_STATE) return process.env.AUTO_TEST_STORAGE_STATE;
-  const auth = loadAuth();
-  return expandEnv(auth.storageState ?? '', 'auth.storageState') || undefined;
-}
-
-const headers = buildHeaders();
-const storageState = resolveStorageState();
-
-const use = {
-  baseURL: process.env.BASE_URL ?? 'http://localhost:3000',
-  headless: true,
-  ...(Object.keys(headers).length > 0 ? { extraHTTPHeaders: headers } : {}),
-  ...(storageState ? { storageState } : {}),
-};
-
-export default defineConfig({
-  projects: [
-    {
-      name: 'auth-setup',
-      testMatch: /\\.setup\\.ts\$/,
-      testDir: './auth',
-    },
-    {
-      name: 'e2e',
-      testDir: './cases',
-      dependencies: ['auth-setup'],
-      use,
-    },
-  ],
-  timeout: 30_000,
-  /**
-   * 批次产物落点（由 executor 注入；缺失时回退到项目根的 Playwright 默认）：
-   * - AUTO_TEST_OUTPUT_DIR：screenshots / videos / traces 输出目录
-   * - AUTO_TEST_JSON_OUTPUT_FILE：JSON reporter 输出文件
-   *
-   * executor 把它们指向 .auto-test/reports/runs/<batchId>/artifacts 和
-   * .auto-test/reports/runs/<batchId>/results.json，实现"按批次号组织"。
-   */
-  outputDir: process.env.AUTO_TEST_OUTPUT_DIR ?? './test-results',
-  reporter: [
-    ['list'],
-    ['json', { outputFile: process.env.AUTO_TEST_JSON_OUTPUT_FILE ?? './reports/runs/.tmp/results.json' }],
-  ],
-});
-`;
+const LEGACY_FILES = [
+  {
+    path: STORAGE_LAYOUT.playwrightConfig,
+    reason: '旧内联 Playwright 配置（含残缺 reporter 触发收尾断链），已由包内配置 dist/runner/playwright.config.{js,ts} 接管',
+  },
+  {
+    path: '.auto-test/auto-test-reporter.ts',
+    reason: '旧 reporter re-export，已被包内 dist/runner/reporter.js 直接 import 替代',
+  },
+  {
+    path: `${STORAGE_LAYOUT.authDir}/admin.setup.ts`,
+    reason: '占位 setup 可能失败连坐真实用例；按需用 `auto-test auth init <name>` 生成',
+  },
+];
 
 export interface InitOptions {
   force?: boolean;
@@ -207,17 +114,14 @@ export interface InitResult {
   cwd: string;
   root: string;
   configPath: string;
-  runnerConfigPath: string;
   createdDirs: string[];
   wroteConfig: boolean;
-  wrotePlaywrightConfig: boolean;
   updatedGitignore: boolean;
+  /** 历史遗留文件列表（提示用户可手动删除，不影响运行） */
+  legacyFiles: string[];
   nextSteps: string[];
 }
 
-/**
- * 创建目录（已存在则跳过）
- */
 function ensureDirs(cwd: string, dirs: string[]): string[] {
   const created: string[] = [];
   for (const dir of dirs) {
@@ -230,31 +134,23 @@ function ensureDirs(cwd: string, dirs: string[]): string[] {
   return created;
 }
 
-/**
- * 写入 .auto-test/config.json（已存在且无 --force 则跳过）
- */
 function ensureConfig(cwd: string, force: boolean): boolean {
   const configPath = join(cwd, STORAGE_LAYOUT.configFile);
   if (existsSync(configPath) && !force) return false;
-  ensureDir(dirname(configPath));
+  mkdirSync(dirname(configPath), { recursive: true });
   writeFileSync(configPath, JSON.stringify(DEFAULT_CONFIG_OBJECT, null, 2) + '\n', 'utf-8');
   return true;
 }
 
-/**
- * 渲染 .auto-test/playwright.config.ts（已存在且无 --force 则跳过）
- */
-function ensurePlaywrightConfig(cwd: string, force: boolean): boolean {
-  const configPath = join(cwd, STORAGE_LAYOUT.playwrightConfig);
-  if (existsSync(configPath) && !force) return false;
-  ensureDir(dirname(configPath));
-  writeFileSync(configPath, PLAYWRIGHT_CONFIG_BODY, 'utf-8');
-  return true;
+function detectLegacyFiles(cwd: string): string[] {
+  const found: string[] = [];
+  for (const entry of LEGACY_FILES) {
+    const full = join(cwd, entry.path);
+    if (existsSync(full)) found.push(entry.path);
+  }
+  return found;
 }
 
-/**
- * 幂等追加 .gitignore 条目
- */
 function ensureGitignore(cwd: string): boolean {
   const gitignorePath = join(cwd, '.gitignore');
   const existing = existsSync(gitignorePath) ? readFileSync(gitignorePath, 'utf-8') : '';
@@ -268,10 +164,6 @@ function ensureGitignore(cwd: string): boolean {
     existing + (needsLeadingNewline ? '\n' : '') + '# auto-test\n' + missing.join('\n') + '\n';
   writeFileSync(gitignorePath, newContent, 'utf-8');
   return true;
-}
-
-function ensureDir(path: string): void {
-  if (!existsSync(path)) mkdirSync(path, { recursive: true });
 }
 
 export async function initCommand(options: InitOptions): Promise<void> {
@@ -292,15 +184,14 @@ export async function initCommand(options: InitOptions): Promise<void> {
     });
   }
 
-  const wrotePlaywrightConfig = ensurePlaywrightConfig(cwd, !!options.force);
-
+  const legacyFiles = detectLegacyFiles(cwd);
   const updatedGitignore = ensureGitignore(cwd);
 
   const nextSteps = [
     'npm install',
-    'npx playwright install chromium',
-    `auto-test models select        # 选定 LLM provider/model`,
-    `auto-test generate "<测试需求描述>" --priority P0`,
+    'npx playwright install chromium   # 或装系统 Chrome/Edge 走 auto 通道',
+    'auto-test models select',
+    'auto-test generate "<测试需求描述>" --priority P0',
   ];
 
   const result: InitResult = {
@@ -308,11 +199,10 @@ export async function initCommand(options: InitOptions): Promise<void> {
     cwd,
     root: '.auto-test',
     configPath: STORAGE_LAYOUT.configFile,
-    runnerConfigPath: STORAGE_LAYOUT.playwrightConfig,
     createdDirs,
     wroteConfig,
-    wrotePlaywrightConfig,
     updatedGitignore,
+    legacyFiles,
     nextSteps,
   };
 
@@ -327,15 +217,14 @@ export async function initCommand(options: InitOptions): Promise<void> {
   } else {
     logger.info(`○ ${STORAGE_LAYOUT.configFile} 已存在（用 --force 覆盖）`);
   }
-  if (wrotePlaywrightConfig) {
-    logger.info(`✓ 写入 ${STORAGE_LAYOUT.playwrightConfig}`);
-  } else {
-    logger.info(`○ ${STORAGE_LAYOUT.playwrightConfig} 已存在（用 --force 覆盖）`);
-  }
   if (updatedGitignore) {
     logger.info(`✓ 追加 .gitignore 条目`);
   } else {
     logger.info(`○ .gitignore 条目已就绪`);
+  }
+  if (legacyFiles.length > 0) {
+    logger.warn(`检测到历史 init 产物（已不影响运行，可手动删除）：`);
+    for (const f of legacyFiles) logger.warn(`  - ${f}`);
   }
 
   logger.info('下一步：');

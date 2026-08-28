@@ -7,7 +7,9 @@
  * - try/finally 保证浏览器进程关闭，不残留
  *
  * 设计取舍：
- * - 优先系统 Chrome（channel: 'chrome'），回退 Playwright 自带 chromium
+ * - 浏览器通道走 resolveBrowserChannel()：auto 检测链 chromium → chrome → msedge，
+ *   让内网/受限环境用户开箱即用（无需下载 Playwright chromium）
+ * - 启动失败时给三选一指引（install chromium / 内网镜像 / 装系统 Chrome|Edge）
  * - a11y 树通过 `page.evaluate` 用字符串形式提交（绕过 tsx/esbuild 在
  *   嵌套函数上注入 __name 辅助函数导致的 ReferenceError）
  * - Playwright 1.62+ 已移除 `page.accessibility.snapshot()`，自己实现简化版
@@ -15,6 +17,7 @@
 import { chromium, type Page, type Browser } from 'playwright';
 import { CliError, ExitCode } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
+import { resolveBrowserChannel, NO_BROWSER_GUIDANCE } from '../runner/browser-channel.js';
 import {
   readExploreCache,
   writeExploreCache,
@@ -82,13 +85,14 @@ export async function explorePage(options: ExploreOptions): Promise<ExploreResul
 
   const start = Date.now();
 
-  // 使用 Playwright 内置 chromium（用户已装在 ~/Library/Caches/ms-playwright/）
+  // 浏览器通道决策：auto → chromium / chrome / msedge 三者择一可用
+  const { channel, unavailable } = resolveBrowserChannel('auto');
   let browser: Browser | null = null;
-  browser = await chromium.launch({ headless }).catch((err) => {
+  browser = await chromium.launch({ headless, ...(channel ? { channel } : {}) }).catch((err) => {
     throw new CliError({
       code: ExitCode.AGENT_ERROR,
       message: `启动浏览器失败：${(err as Error).message}`,
-      hint: '请确认已运行 `npx playwright install chromium`',
+      hint: unavailable ?? NO_BROWSER_GUIDANCE,
     });
   });
 

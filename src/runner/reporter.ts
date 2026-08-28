@@ -1,12 +1,11 @@
 /**
- * 自定义 Playwright Reporter
+ * 自定义 Playwright Reporter。
  *
- * 该文件被 `playwright.config.ts` 的 `reporter` 字段以模块路径形式加载：
- *   reporter: [['list'], ['./dist/runner/reporter.js']]
- *
+ * `auto-test init` 的生成配置内联了同一能力的自包含实现，并通过生成的
+ * `auto-test-reporter.ts` 入口注册；保留本实现供非 init/包级配置直接复用。
  * 默认导出无参构造的 `AutoTestReporter`；运行时依赖通过环境变量注入：
  * - AUTO_TEST_RUN_ID: 当前运行的 ID（由 executor.ts 在 spawn 子进程前写入）
- * - AUTO_TEST_REPORTS_DIR: reports/ 路径（兜底 .auto-test/reports）
+ * - AUTO_TEST_REPORTS_DIR: 当前批次报告目录
  * - AUTO_TEST_CASES_DIR: tests/ 路径（兜底 .auto-test/cases）
  *
  * 兜底策略：env 缺失时使用与主进程一致的默认路径（.auto-test/*），
@@ -15,11 +14,9 @@
  *
  * 执行链路（auto-test run → playwright test 子进程）：
  *   1. executor 调用 HistoryStore.createRun 生成 runId
- *   2. spawn 子进程，env 写入上述三个变量
- *   3. 子进程加载本文件，实例化 AutoTestReporter
- *   4. onTestEnd 把每条结果通过 HistoryStore.appendResult 落盘
- *      + 通过 CaseStore.applyRunStats 更新用例 stats
- *   5. onEnd 通过 HistoryStore.finalizeRun 收尾本次运行
+ *   2. spawn 子进程，env 写入上述变量
+ *   3. reporter 实例在 onTestEnd 更新结果与用例 stats
+ *   4. onEnd 通过 HistoryStore.finalizeRun 收尾本次运行
  *
  * 设计要点：
  * - `printsToStdio = false`：避免重复打印，让 list reporter 负责用户输出
@@ -34,7 +31,7 @@ import type {
   TestError,
   TestResult as PWTestResult,
 } from '@playwright/test/reporter';
-import { basename } from 'node:path';
+import { basename, isAbsolute, relative, resolve, sep } from 'node:path';
 import { CaseStore } from '../store/case-store.js';
 import { HistoryStore } from '../store/history-store.js';
 import type { CaseStatus, RunStatus, TestResult } from '../store/types.js';
@@ -123,7 +120,15 @@ class AutoTestReporter implements Reporter {
 // --- helpers ---
 
 function convertResult(testCase: TestCase, pw: PWTestResult): TestResult {
-  const caseName = basename(testCase.location.file).replace(/\.spec\.ts$/, '');
+  // 规范化 caseName 为「组/名称」形式（相对 cases 目录），与 CLI 参数保持一致；
+  // cases 目录之外的文件（如 auth/*.setup.ts）退化为文件基名
+  const casesDir = resolve(process.env.AUTO_TEST_CASES_DIR ?? '.auto-test/cases');
+  const file = resolve(testCase.location.file);
+  const rel = relative(casesDir, file).replace(/\.spec\.ts$/, '');
+  const caseName =
+    !rel.startsWith('..') && !isAbsolute(rel)
+      ? rel.split(sep).join('/')
+      : basename(file).replace(/\.spec\.ts$/, '');
 
   const attachments = (pw.attachments ?? []).map((a) => ({
     name: a.name ?? 'unnamed',

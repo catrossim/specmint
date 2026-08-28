@@ -22,6 +22,8 @@ import { createAgentSession } from '../agent/session.js';
 import { createSetupTools, SETUP_TOOL_NAMES } from '../agent/tools.js';
 import { buildGenerateSetupPrompt } from '../agent/prompts.js';
 import { loadConfig } from '../config.js';
+import { resolveRunnerConfigPath } from '../runner/config-resolver.js';
+import { buildSpawnEnv } from '../runner/spawn-env.js';
 
 const SETUP_FILE_RE = /\.setup\.ts$/;
 const KEBAB_CASE_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
@@ -182,20 +184,34 @@ export async function authRefreshCommand(
     });
   }
   const { storage } = createStores(cwd);
-  const config = join(cwd, STORAGE_LAYOUT.configFile);
-  if (!existsSync(config)) {
+  const configPath = join(cwd, STORAGE_LAYOUT.configFile);
+  if (!existsSync(configPath)) {
     throw new CliError({
       code: ExitCode.NOT_FOUND,
       message: `找不到 ${STORAGE_LAYOUT.configFile}，请先运行 \`auto-test init\``,
     });
   }
+  const config = loadConfig(cwd);
+
+  const runnerConfigPath = resolveRunnerConfigPath();
+  const { env } = buildSpawnEnv({
+    cwd,
+    casesDir: storage.casesDir,
+    reportsDir: storage.reportsDir,
+    authDir: storage.authDir,
+    configPath: storage.configPath,
+    runId: `auth-refresh-${name}-${Date.now()}`,
+    outputDir: storage.reportsDir,
+    jsonOutputFile: join(storage.reportsDir, '.tmp'),
+    config,
+  });
 
   logger.info(`正在 refresh ${name}...`);
   const exitCode = await new Promise<number>((resolve) => {
     const child = spawn(
       'npx',
-      ['playwright', 'test', '--config', storage.runnerConfigPath, '--project=auth-setup', '--grep', name],
-      { cwd, stdio: 'inherit' },
+      ['playwright', 'test', '--config', runnerConfigPath, '--project=auth-setup', '--grep', name],
+      { cwd, env, stdio: 'inherit' },
     );
     child.on('exit', (code) => resolve(code ?? 1));
   });

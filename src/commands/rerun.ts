@@ -50,7 +50,9 @@ export async function rerunCommand(options: RerunOptions): Promise<void> {
     cwd,
     casesDir: storage.casesDir,
     reportsDir: storage.reportsDir,
-    runnerConfigPath: storage.runnerConfigPath,
+    configPath: storage.configPath,
+    authDir: storage.authDir,
+    config,
     browser: config.runner.defaultBrowser,
   });
 

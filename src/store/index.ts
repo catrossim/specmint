@@ -19,7 +19,6 @@ export interface StorageLayout {
   pageObjectsDir: string;
   reportsDir: string;
   configPath: string;
-  runnerConfigPath: string;
   authDir: string;
   authStorage: string;
 }
@@ -41,7 +40,6 @@ export function createStores(cwd: string): Stores {
     pageObjectsDir: toAbsolute(STORAGE_LAYOUT.pages, cwd),
     reportsDir: toAbsolute(STORAGE_LAYOUT.reports, cwd),
     configPath: toAbsolute(STORAGE_LAYOUT.configFile, cwd),
-    runnerConfigPath: toAbsolute(STORAGE_LAYOUT.playwrightConfig, cwd),
     authDir: toAbsolute(STORAGE_LAYOUT.authDir, cwd),
     authStorage: toAbsolute(STORAGE_LAYOUT.authStorage, cwd),
   };

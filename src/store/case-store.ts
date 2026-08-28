@@ -491,7 +491,7 @@ export class CaseStore {
       logger.warn(`applyRunStats: 用例 ${name} 不存在，跳过`);
       return;
     }
-    const prev = meta.stats;
+    const prev = meta.stats ?? emptyStats();
     const newCount = prev.runCount + 1;
     const newAvg =
       prev.runCount === 0
@@ -565,7 +565,15 @@ function safeUnlink(path: string): void {
 
 function readMeta(file: string): CaseMeta {
   const raw = readFileSync(file, 'utf-8');
-  return JSON.parse(raw) as CaseMeta;
+  const parsed = JSON.parse(raw) as Partial<CaseMeta>;
+  // 兜底可选字段：用户手写或老格式 meta.json 可能缺 stats/tags，
+  // 不兜底会导致 applyRunStats / list 直接炸（前者会刷 warn，后者静默丢用例）
+  const merged: Partial<CaseMeta> = {
+    ...parsed,
+    tags: parsed.tags ?? [],
+    stats: parsed.stats ?? emptyStats(),
+  };
+  return merged as CaseMeta;
 }
 
 function dedupe<T>(arr: T[]): T[] {

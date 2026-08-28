@@ -27,13 +27,14 @@
 ## 安装
 
 ```bash
-# 0. 初始化项目（生成目录结构 + 默认配置）
+# 0. 初始化项目（生成目录结构 + 默认配置；不再生成 playwright.config.ts，配置全在包内）
 npx auto-test init
 
 # 1. 安装 npm 依赖
 npm install
 
 # 2. 安装 Playwright 浏览器（至少 chromium）
+#    内网/受限环境可省略这步；auto-test 会自动回退到系统 Chrome/Edge
 npx playwright install chromium
 ```
 
@@ -66,7 +67,8 @@ npx playwright install chromium
 node examples/serve.mjs
 # → http://localhost:4000
 
-# 2. 设置 baseURL
+# 2. 设置 baseURL（executor 透传给子进程 BASE_URL，不再断链）
+#    也可以写到 .auto-test/config.json runner.baseURL，env 仍可临时覆盖
 export AUTO_TEST_BASE_URL=http://localhost:4000
 
 # 3. 用 generate 生成用例（探索模式）
@@ -474,3 +476,69 @@ npx auto-test run --priority P0 --label nightly-batch-2
 - 完全向后兼容 v2.1：旧 `.auto-test/reports/runs/<ISO>/` 目录仍可读
 - 项目根遗留的 `test-results/` / `playwright-report/` 手动 `rm -rf` 清理一次即可
 - `playwright.config.ts` 模板升级：手动加入 `outputDir: process.env.AUTO_TEST_OUTPUT_DIR ?? './test-results'` 与 JSON reporter 同样从 env 读取
+
+---
+
+## v2.3 增量（2026-08）
+
+### 新增能力
+
+- **包内配置接管**：`.auto-test/playwright.config.ts` 与 `.auto-test/auto-test-reporter.ts` 不再生成为用户文件，统一在 auto-test 包内 `dist/runner/playwright.config.{js,ts}` 自带；executor 通过 `import.meta.url` 定位并 `--config` 指向。彻底消灭"模板内联版 vs 包内版"双实现漂移
+- **深度自定义逃生舱**：`auto-test run --config <path>` 可显式指定自定义 Playwright 配置
+- **浏览器通道自动回退**：`runner.browserChannel: "auto"`（默认），检测链 chromium → 系统 Chrome → 系统 Edge。**内网/受限环境无需下载 Playwright chromium**，开箱即用
+- **失败现场默认保留**：`runner.trace` 默认从 `on-first-retry` 提升为 `retain-on-failure`，heal 时 LLM 有页面现场可看；磁盘占用可控（仅失败用例产生，约 1-5 MB / 用例）
+- **`BASE_URL` 透传修复**：executor 显式注入 `BASE_URL = AUTO_TEST_BASE_URL ?? ...` 给子进程（之前仅 `...process.env` 不带过去，`AUTO_TEST_BASE_URL` 等于没生效）
+- **登录态按需启用**：auth-setup project 仅在检测到 `*.setup.ts` 时才挂载，根治"占位 setup 失败连坐真实用例 → did not run"与"无 setup 时跑空"两个独立 bug
+- **InitResult 接口裁剪**：`init` 不再返回 `wrotePlaywrightConfig` / `wroteAutoTestReporter` / `wroteAdminSetup` 字段（不再生成）
+- **env 协议收口**：所有 `AUTO_TEST_*` env 由 `src/runner/spawn-env.ts` 统一注入，run/rerun/auth refresh 三入口共用同一协议
+
+### 配置增量
+
+`.auto-test/config.json` `runner` 段新增字段：
+
+```jsonc
+"runner": {
+  "defaultBrowser": "chromium",
+  "trace": "retain-on-failure",   // 默认提升（v2.2 是 on-first-retry）
+  "screenshot": "only-on-failure",
+  "timeoutMs": 30000,              // 新增：单用例超时
+  "browserChannel": "auto"         // 新增：auto | chromium | chrome | msedge
+}
+```
+
+### 内网/受限环境
+
+```bash
+# 1. auto 模式（默认）：无需任何配置；chromium 缺失自动回退系统 Chrome/Edge
+npx auto-test run
+
+# 2. 显式固定系统 Chrome（CI 容器常用）
+# .auto-test/config.json runner.browserChannel: "chrome"
+
+# 3. 用内网镜像下载 Playwright chromium
+PLAYWRIGHT_DOWNLOAD_HOST=https://<内网镜像>/ npx playwright install chromium
+```
+
+### 升级步骤（v2.2 → v2.3）
+
+```bash
+# 1. 删旧 init 产物（包内配置接管，不再生成）
+rm .auto-test/playwright.config.ts .auto-test/auto-test-reporter.ts
+rm .auto-test/auth/admin.setup.ts   # 占位 setup，避免连坐
+
+# 2. 重新 init（幂等；检测到旧文件会给出"可删除"提示）
+npx auto-test init
+
+# 3. config.json runner 段新增 timeoutMs / browserChannel；trace 默认变 retain-on-failure
+#    如果你以前设过 trace=on-first-retry，手动改回
+```
+
+### CLI 增量
+
+```bash
+# 显式指定自定义 Playwright 配置（高级选项）
+npx auto-test run --config ./my-playwright.config.ts
+
+# 强制使用系统 Chrome（跳过 auto 检测）
+# 在 config.json 里设 runner.browserChannel: "chrome"
+```
