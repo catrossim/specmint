@@ -14,7 +14,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve as resolveFile } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { defineConfig } from '@playwright/test';
+import type { PlaywrightTestConfig } from '@playwright/test';
 import { STORAGE_LAYOUT, type AutoTestConfig } from '../config.js';
 
 /** 包内 reporter 绝对路径，Playwright 加载自定义 reporter 需要绝对路径 */
@@ -138,8 +138,24 @@ function resolveScreenshot(cfg: AutoTestConfig | null): 'on' | 'off' | 'only-on-
 
 const cfg = loadConfig();
 
-export default defineConfig({
-  projects: buildProjects(cfg?.auth),
+/**
+ * 包内 Playwright 配置（用户运行 `specmint run` 时被 Playwright 加载）。
+ *
+ * 重要：使用 `import type` 而不是 `import { defineConfig } from '@playwright/test'`，
+ * 并以 `satisfies PlaywrightTestConfig` 做类型校验。这能彻底避免本文件运行时
+ * 触发对 `@playwright/test` 的 require——否则 Playwright 在加载本 config 时会从
+ * specmint 自身的 node_modules 解析到一份 `@playwright/test` 实例，又会在随后
+ * 加载用户 spec.ts 时从 cwd（用户项目）解析到另一份，从而触发
+ * "Requiring @playwright/test second time" 错误。
+ *
+ * 历史修复：参见 hotst 项目报的 dual load 报错。运行时不再依赖 `@playwright/test`，
+ * 类型完整性通过 `import type` + `satisfies` 同时保留。
+ */
+const config = {
+  // `buildProjects` 返回 `Record<string, unknown>[]`，与 FullProject 字段 duck 兼容，
+  // 但 TS 严格类型下不相容。这里做一次窄断言（仅 projects），其余字段由 satisfies
+  // 校验（如 timeout / outputDir / reporter 等）。
+  projects: buildProjects(cfg?.auth) as unknown as PlaywrightTestConfig['projects'],
   timeout: cfg?.runner?.timeoutMs ?? 30_000,
   outputDir:
     process.env.SPECMINT_OUTPUT_DIR ?? join(process.cwd(), 'test-results'),
@@ -154,5 +170,7 @@ export default defineConfig({
       },
     ],
     [REPORTER_PATH],
-  ] as never,
-});
+  ],
+} satisfies PlaywrightTestConfig;
+
+export default config;

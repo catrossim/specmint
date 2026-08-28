@@ -9,17 +9,40 @@
  *
  * 注意：`chromiumApi.channel('chrome').executablePath()` 是 Playwright 公开 API，
  * 在 channel 不存在时也可能返回预期路径但实际缺失；统一用 existsSync 二次确认。
+ *
+ * 关键约束：本模块必须 **不在模块顶层** import `@playwright/test`。
+ * 因为 specmint 包内 Playwright config 被 Playwright 加载时，
+ * 顶层 import 会从 specmint 自己的 node_modules 解析到一份 `@playwright/test`；
+ * 而随后加载用户 spec.ts 时又从用户项目 cwd 解析到另一份——两份 module 实例
+ * 不同，会触发 "Requiring @playwright/test second time"。
+ *
+ * 因此这里使用 `createRequire` + `process.cwd()` 锚定，让解析只命中用户项目
+ * 的 `@playwright/test`（即 spec.ts 同款实例），并以 lazy 函数只在 `auto`
+ * 路径被需要时才动态 require。
  */
 import { existsSync } from 'node:fs';
-import { chromium as chromiumApi } from '@playwright/test';
+import { createRequire } from 'node:module';
+import { join } from 'node:path';
 import { logger } from '../utils/logger.js';
 
-/** `BrowserType.channel()` 是 Playwright 内部 API，公开类型未导出，这里窄化为 duck type。 */
-const chromiumAny = chromiumApi as unknown as {
+/** 从用户 cwd 解析出的 require —— 保证与用户 spec.ts 看到同一份 `@playwright/test`。 */
+const cwdRequire = createRequire(join(process.cwd(), 'package.json'));
+
+/** Playwright `BrowserType.channel()` 在公开类型里没声明，duck typing。 */
+interface ChromiumLike {
   executablePath(): string;
   channel(name: 'chrome' | 'msedge'): { executablePath(): string };
-};
+}
 
+let _chromium: ChromiumLike | null = null;
+function chromiumApi(): ChromiumLike {
+  if (_chromium) return _chromium;
+  const mod = cwdRequire('@playwright/test') as { chromium: ChromiumLike };
+  _chromium = mod.chromium;
+  return _chromium;
+}
+
+/** `BrowserType.channel()` 是 Playwright 内部 API，公开类型未导出，这里窄化为 duck type。 */
 export type BrowserChannel = 'chromium' | 'chrome' | 'msedge';
 export type BrowserChannelPreference = BrowserChannel | 'auto';
 
@@ -48,15 +71,16 @@ export function resolveBrowserChannel(
     return { channel: preference, fellBack: false };
   }
   // auto：检测链 chromium → chrome → msedge
+  const api = chromiumApi();
   try {
-    if (existsSync(chromiumAny.executablePath())) {
+    if (existsSync(api.executablePath())) {
       return { fellBack: false };
     }
   } catch {
     // executablePath() 极端情况抛错，继续后续检测
   }
   try {
-    if (existsSync(chromiumAny.channel('chrome').executablePath())) {
+    if (existsSync(api.channel('chrome').executablePath())) {
       logger.warn(
         '[specmint] Playwright chromium 未检测到，自动回退使用系统 Chrome（channel=chrome）',
       );
@@ -66,7 +90,7 @@ export function resolveBrowserChannel(
     /* fall through */
   }
   try {
-    if (existsSync(chromiumAny.channel('msedge').executablePath())) {
+    if (existsSync(api.channel('msedge').executablePath())) {
       logger.warn(
         '[specmint] Playwright chromium 与系统 Chrome 均不可用，自动回退使用系统 Edge（channel=msedge）',
       );
