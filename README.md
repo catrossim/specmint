@@ -11,9 +11,13 @@
 - **自然语言生成用例**：根据描述或结合真实页面探索生成可读性好的 `.spec.ts` 脚本
 - **两种生成模式**：纯描述生成（快） / 页面探索生成（先用 Playwright 打开 URL 提取 a11y 快照，准确度更高）
 - **强约束可读性**：强制语义定位器（`getByRole` / `getByLabel` / `getByTestId`），禁止易碎选择器，关键步骤中文注释
+- **少样本示例库**：内置 `login-flow` / `form-submit` / `list-search` / `detail-page` 等场景示例，prompt 自动匹配，输出风格稳定
+- **探索快照缓存**：相同 URL 的 a11y 快照落盘复用（默认 TTL 10 分钟），实测每次生成省 5–15s 浏览器启动
+- **CLI 强制归类**：`--module` / `--group` 一键锁定用例模块与分组，避免 PI 自由发挥污染目录
+- **按模块 / 分组过滤**：`list` 与 `list_cases` 支持 `--module` / `--group`，大型用例库检索更高效
 - **重跑与历史**：失败用例一键重跑，每次运行落盘到 `reports/runs/<ts>/run.json`，可追溯
-- **面向 agent 友好**：所有命令支持 `--json` 输出，结构化错误，退出码语义清晰
 - **可重入自愈**：`heal` 子命令把失败用例与日志委托给 pi-agent 自动修复
+- **面向 agent 友好**：所有命令支持 `--json` 输出，结构化错误，退出码语义清晰
 - **skill 一键导出**：`skill export` 生成 CodeBuddy / Claude Code 可加载的 SKILL.md
 
 ---
@@ -89,10 +93,10 @@ npx auto-test heal login-e2e
 | 命令 | 用途 |
 |---|---|
 | `init` | 初始化项目结构与默认配置 |
-| `generate <description>` | 生成测试用例；可选 `--url` 启用页面探索模式；可选 `--page-object` 同步生成 POM |
+| `generate <description>` | 生成测试用例；支持 `--url` / `--module` / `--group` / `--priority` / `--no-explore-cache` / `--page-object` |
 | `run [pattern]` | 运行用例；透传 `--browser` / `--workers` / `--retries` / `--headed` / `--ui` / `--debug` / `--grep` |
 | `rerun [--from <runId>]` | 重跑最近一次（或指定）失败用例 |
-| `list [--tag <tag>]` | 列出用例库 |
+| `list [--tag <tag>] [--module <m>] [--group <g>]` | 列出用例库，支持按模块 / 分组过滤 |
 | `show <name>` | 查看用例详情（含 spec 与 POM 代码） |
 | `delete <name> [--yes]` | 删除用例 |
 | `history [--limit N] [--case <name>]` | 查看运行历史 |
@@ -236,10 +240,14 @@ src/
 ├── config.ts             # auto-test.config.json 加载
 ├── commands/             # 各子命令实现
 ├── agent/                # pi-agent SDK 集成 + Extensions + prompt + 页面探索
+│   ├── explore.ts        # 页面探索：a11y 快照 + CLI 约束注入
+│   ├── explore-cache.ts  # 探索快照缓存（URL + storageState 指纹 + TTL）
+│   ├── checkpoint.ts     # agent 运行断点（可恢复）
+│   └── templates/        # 内置少样本示例库（login-flow / form-submit / list-search / detail-page）
 ├── store/                # 用例库 + 运行历史
 ├── runner/               # executor (CLI spawn) + reporter (结果落盘)
 ├── templates/            # spec / POM / meta 骨架
-└── utils/                # logger + errors
+└── utils/                # logger + errors + 并发控制 + 重试 + 模板渲染
 ```
 
 数据流：
@@ -264,7 +272,12 @@ skill     → 写入 ./skills/auto-test/SKILL.md
 ```json
 {
   "agent": { "model": "anthropic/claude-sonnet-latest", "delegate": "sdk" },
-  "explore": { "headless": true, "timeoutMs": 15000, "maxElements": 200 },
+  "explore": {
+    "headless": true,
+    "timeoutMs": 15000,
+    "maxElements": 200,
+    "cache": { "enabled": true, "ttlMs": 600000, "dir": ".auto-test/cache/explore" }
+  },
   "generation": {
     "selectorPolicy": {
       "prefer": ["getByRole", "getByLabel", "getByPlaceholder", "getByTestId", "getByText"],
@@ -276,6 +289,8 @@ skill     → 写入 ./skills/auto-test/SKILL.md
 ```
 
 修改后立即生效，无需重启。
+
+**探索快照缓存**：相同 URL（+ storageState 指纹）的 a11y 快照会落到 `.auto-test/cache/explore/` 复用，`ttlMs` 内多次生成不会重复打开浏览器。需要强制刷新时加 `--no-explore-cache` 或直接删除目录。
 
 ---
 
@@ -296,7 +311,9 @@ npm run typecheck
 
 ## License
 
-MIT---
+MIT
+
+---
 
 ## v2 升级说明（2026-08）
 
@@ -326,4 +343,54 @@ MIT---
 4. `npx auto-test models select`（首次选择 LLM）
 5. `npx auto-test auth init admin`（如有登录态需求）
 6. `npx auto-test generate "<描述>" --priority P0`（开始生成）
-README_EOF
+
+---
+
+## v2.1 增量（2026-08）
+
+### 新增能力
+
+- **少样本示例库**：agent 提示词内联 `login-flow` / `form-submit` / `list-search` / `detail-page` 四个场景的完整样例，自动按描述关键词匹配，输出风格更稳
+- **探索快照缓存**：`src/agent/explore-cache.ts` 把 (URL + storageState) → a11y 快照落盘到 `.auto-test/cache/explore/`，TTL 默认 10 分钟；同 URL 反复生成时直接复用，省掉浏览器启动
+- **CLI 强制归类**：`generate` 新增 `--module` / `--group`，直接覆盖 PI 输出，绕过归一化层，避免脏目录
+- **list / list_cases 过滤**：新增 `--module` / `--group` 过滤，配合大量用例的检索更顺手
+- **可恢复断点**：`src/agent/checkpoint.ts` 把每次 generate 的中间态落盘，遇到异常可恢复
+- **工具层扩展**：`src/utils/concurrency.ts`（并发控制）、`src/utils/prompt.ts`（模板渲染）、`src/utils/retry.ts`（重试）下沉通用能力
+
+### 配置增量
+
+`.auto-test/config.json`：
+
+```jsonc
+{
+  "explore": {
+    "cache": {
+      "enabled": true,        // 是否启用快照缓存
+      "ttlMs": 600000,        // 10 分钟；过期的快照会被忽略并重建
+      "dir": ".auto-test/cache/explore"  // 缓存目录
+    }
+  }
+}
+```
+
+### CLI 增量
+
+```bash
+# 强制归类到「用户认证」模块 / auth 分组（v2.1+）
+npx auto-test generate "登录成功" \
+  --url http://localhost:4000/login \
+  --module 用户认证 --group auth \
+  --priority P0
+
+# 强制刷新探索快照
+npx auto-test generate "..." --url ... --no-explore-cache
+
+# 按模块 / 分组检索用例（v2.1+）
+npx auto-test list --module 用户认证 --group auth --json
+```
+
+### 兼容说明
+
+- 完全向后兼容 v2：旧 `.auto-test/` 项目无需改动；首次运行会按需自动创建 `cache/` 子目录
+- 关闭缓存只需 `explore.cache.enabled = false` 或运行时加 `--no-explore-cache`
+- 升级前可删除 `.auto-test/cache/` 强制冷启动（不会影响用例与报告）

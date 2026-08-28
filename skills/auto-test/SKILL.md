@@ -13,7 +13,6 @@ triggers:
   - 配置 LLM provider
   - web 测试
 ---
-SKILL_EOF# auto-test
 
 面向 agent 的 Playwright 页面测试 CLI：自然语言生成用例、可重跑、历史可追溯、登录态管理。
 
@@ -33,7 +32,8 @@ SKILL_EOF# auto-test
 
 ### 用例库
 
-- `generate <description> -p <priority> [--url] [--page-object] [--model] [--tag] [--name]` — **必传** `--priority` (P0|P1|P2|P3)- `list [--tag] [--priority P0,P1] [--auth] [--json]` — 表格输出含 PRI / AUTH 列
+- `generate <description> -p <priority> [--url] [--page-object] [--model] [--tag] [--name] [--module <m>] [--group <g>] [--no-explore-cache]` — **必传** `--priority` (P0|P1|P2|P3)；`--module` / `--group` 强制覆盖 PI 推断；`--no-explore-cache` 强制刷新探索快照
+- `list [--tag] [--priority P0,P1] [--auth] [--module <m>] [--group <g>] [--json]` — 表格输出含 PRI / AUTH / MODULE 列
 - `show <name>` — 详情（含 priority / group / module / linkedTickets / auth / tags）
 - `delete <name>` — 删除用例（spec + meta + POM）
 
@@ -70,9 +70,17 @@ auto-test generate "登录：用户名密码登录后跳转首页" --priority P0
 # 4. 带页面探索的生成
 auto-test generate "完整登录流程" --url https://example.com/login --priority P1
 
+# 4b. 强制归类到 auth/login 模块（v2.1+）
+auto-test generate "登录失败提示" --priority P1 --module 用户认证 --group auth
+
+# 4c. 强制刷新探索快照（v2.1+）
+auto-test generate "..." --url https://example.com/login --no-explore-cache
+
 # 5. 列用例
 auto-test list --priority P0
-auto-test list --auth admin# 6. 配置登录态（手写）
+auto-test list --auth admin
+auto-test list --module 用户认证 --group auth --json   # v2.1+ 按模块/分组过滤
+# 6. 配置登录态（手写）
 auto-test auth init admin
 # 编辑 .auto-test/auth/admin.setup.ts 填登录步骤
 auto-test auth refresh admin
@@ -95,7 +103,7 @@ AUTH_TOKEN=$STAGING_TOKEN auto-test run --priority P0
 auto-test show auth/login-success
 auto-test history --limit 5
 auto-test rerun
-auto-test healauth/login-success
+auto-test heal auth/login-success
 ```
 
 ## 用例元数据（`.auto-test/cases/<group>/<name>.meta.json`）
@@ -116,11 +124,16 @@ auto-test healauth/login-success
 
 **字段约束**：
 - `priority`: 必填枚举 `P0|P1|P2|P3`（CLI `--priority` 必传）
-- `group`: 可选，kebab-case，物理子目录分组（如 `auth/login-success`）
-- `module`: 可选，中文模块名（用于报告归类）
+- `group`: 可选，kebab-case，物理子目录分组（如 `auth/login-success`）；CLI `--group` 显式传值时强制覆盖 PI 推断（不传则 PI 从需求推断）
+- `module`: 可选，中文模块名（用于报告归类）；CLI `--module` 显式传值时强制覆盖 PI 推断
 - `linkedTickets`: 可选，关联 Jira / 需求单号
 - `auth`: 可选，引用 `auth/<name>.setup.ts` 的 storageState
 -`tags`: 可选，小写 kebab-case
+
+**归类约定**：
+- `group` 与 `name` 的第一段必须一致（如 `name=auth/login-success` 时 `group=auth`），物理目录会落到 `.auto-test/cases/auth/login-success.{spec.ts,meta.json}`
+- `group` / `module` / `linkedTickets` 三者协同：一个 group 下可有多个用例，共享同一 module 名；不同 group 不应共享 module 名
+- 修复流程（heal）会保持 group / module / linkedTickets 不变
 
 ## 鉴权注入优先级链
 
@@ -135,6 +148,24 @@ Playwright 默认值
 ```
 
 `config.auth` 字段值支持 `${ENV_VAR}` 占位符，未设时 warning + 空串（fail-fast）。
+
+## 探索快照缓存（v2.1+）
+
+`generate --url` 默认会复用 `.auto-test/cache/explore/<hash>.json` 的 a11y 快照：
+
+- **key** = `sha256(URL + storageState 文件指纹)`，相同 (URL, 角色) 直接复用
+- **TTL** 默认 600000ms（10 分钟），过期或 storageState 变会自动失效
+- **关闭方式**：`explore.cache.enabled = false` 全局关；`--no-explore-cache` 单次关；`rm -rf .auto-test/cache/explore/` 手动清空
+
+**何时该强制刷新**：
+
+- 页面结构发生变化（CSS 类、a11y role）
+- 想验证最新 DOM
+- 调试某个用例希望看原始快照
+
+## 少样本示例库（v2.1+）
+
+`src/agent/templates/` 内联 4 套场景完整样例：`login-flow` / `form-submit` / `list-search` / `detail-page`。`prompts.ts::pickExample()` 按描述关键词自动挑选作为 few-shot 注入 system prompt，输出风格更稳。
 
 ## 输出约定
 

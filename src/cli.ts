@@ -40,6 +40,14 @@ import { PRIORITIES, type Priority } from './store/types.js';
 
 const program = new Command();
 
+function collectSetParam(value: string, previous: Record<string, string> = {}): Record<string, string> {
+  const idx = value.indexOf('=');
+  if (idx <= 0) {
+    throw new Error(`--set 格式必须是 key=value，当前 "${value}"`);
+  }
+  return { ...previous, [value.slice(0, idx)]: value.slice(idx + 1) };
+}
+
 program
   .name('auto-test')
   .description('面向 agent 的 Playwright 页面测试 CLI 工具')
@@ -63,8 +71,17 @@ program
 // --- generate ---
 program
   .command('generate <description>')
-  .description('根据描述（或页面探索）生成测试用例')
-  .option('-u, --url <url>', '目标 URL，启用页面探索模式')
+  .description('根据描述（或页面探索）生成测试用例（多条用例可用逗号分隔 description，并发生成）')
+  .option('-u, --url <url>', '目标 URL，启用页面探索模式。多个用例共享同一 URL 时只探索一次')
+  .option('--no-explore-cache', '禁用本次调用的探索快照缓存（强制重新打开浏览器）')
+  .option('--explore-cache-ttl <ms>', '本次调用的缓存 TTL（毫秒），覆盖 config.explore.cache.ttlMs', (v) => parseInt(v, 10))
+  .option('-c, --concurrency <n>', '批量生成时的并发数（≥1，默认 2）', (v) => {
+    const n = parseInt(v, 10);
+    if (!Number.isFinite(n) || n < 1) {
+      throw new Error(`--concurrency 必须是 ≥ 1 的正整数, 当前 "${v}"`);
+    }
+    return n;
+  })
   .option('-n, --name <name>', '用例名（kebab-case）')
   .option('-p, --priority <priority>', '用例优先级（必填）：P0|P1|P2|P3', (v) => {
     const up = String(v).trim().toUpperCase();
@@ -76,9 +93,66 @@ program
   .option('--model <model>', '本次生成使用的 model（覆盖 config.agent.model），格式 provider/id')
   .option('--page-object', '同步生成 Page Object 文件')
   .option('--tag <tag>', '附加标签，可多次传入', (v, prev: string[]) => prev.concat(v), [] as string[])
+  .option(
+    '--module <module>',
+    '显式指定模块中文名（如 "用户认证"）。传值时强制覆盖 PI 推断，未传则让 PI 自由推断。',
+  )
+  .option(
+    '--group <group>',
+    '显式指定功能分组（kebab-case，如 auth）。传值时强制覆盖 PI 推断并校验 name 前缀一致。',
+  )
+  .option(
+    '--example <name>',
+    '强制使用指定的 few-shot 示例（必须存在于内置 EXAMPLE_LIBRARY）。未传时按 description 关键词自动匹配。',
+  )
+  .option('--no-example', '关闭 few-shot 示例注入（默认启用）')
+  .option(
+    '--template <name>',
+    '模板快路径：用内置模板直接生成（跳过 LLM，~50ms）。可用：login-flow, form-submit, list-search, detail-page。未传时按描述自动匹配，未命中回退 LLM。',
+  )
+  .option('--no-template', '禁用模板快路径，强制走 LLM 生成')
+  .option(
+    '--set <key=value>',
+    '模板参数覆盖（可重复），如 --set keyword=ORD-123 --set url=/orders',
+    collectSetParam,
+    {},
+  )
+  .option(
+    '--interactive',
+    '在生成前让用户确认 LLM 推断的 module / group。仅单条 + TTY + 未传 --module/--group 时生效。',
+  )
+  .option(
+    '--retry <n>',
+    'LLM 调用失败重试次数（默认 3）。仅对网络/超时/限流/5xx 这类可重试错误生效。',
+    (v) => {
+      const n = parseInt(v, 10);
+      if (!Number.isFinite(n) || n < 0) {
+        throw new Error(`--retry 必须为 ≥ 0 的整数，当前 "${v}"`);
+      }
+      return n;
+    },
+  )
+  .option(
+    '--retry-backoff <ms>',
+    '重试首次退避时间（毫秒，默认 1000）。实际退避 = baseDelayMs * 2^attempt + ±25% 抖动，单次上限 30s。',
+    (v) => parseInt(v, 10),
+  )
+  .option(
+    '--checkpoint <dir>',
+    'checkpoint 目录（默认 .auto-test/runs/）。仅批量模式生效：每条用例完成后增量写 state file，部分失败保留供 --resume 诊断，全部成功自动清理。',
+  )
+  .option('--no-checkpoint', '禁用 checkpoint 写入（批量模式下默认启用）')
+  .option(
+    '--resume <file>',
+    '从指定的 state file 恢复，跳过已完成的 description（描述文本严格匹配）。仅批量模式有意义。',
+  )
   .option('--json', '输出 JSON 格式')
   .action(async (description: string, options: Parameters<typeof generateCommand>[1]) => {
-  await generateCommand(description, options);
+  // commander 把 --set 收集为 options.set,映射到 GenerateOptions.setParams
+  const { set, ...rest } = options as Parameters<typeof generateCommand>[1] & {
+    set?: Record<string, string>;
+  };
+  await generateCommand(description, { ...rest, setParams: set });
 });
 
 // --- run ---
@@ -132,6 +206,8 @@ program
     return list as Priority[];
   })
   .option('--auth <name>', '按 auth 角色过滤')
+  .option('--module <module>', '按模块中文名过滤（精确匹配 meta.module）')
+  .option('--group <group>', '按功能分组过滤（kebab-case，匹配 meta.group 或 name 前缀）')
   .option('--json', '输出 JSON 格式')
   .action(listCommand);
 

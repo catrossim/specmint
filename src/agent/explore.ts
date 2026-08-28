@@ -15,6 +15,11 @@
 import { chromium, type Page, type Browser } from 'playwright';
 import { CliError, ExitCode } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
+import {
+  readExploreCache,
+  writeExploreCache,
+  type ExploreCacheKeyParams,
+} from './explore-cache.js';
 
 export interface ExploreOptions {
   url: string;
@@ -22,6 +27,18 @@ export interface ExploreOptions {
   timeoutMs?: number;
   maxElements?: number;
   waitUntil?: 'load' | 'domcontentloaded' | 'networkidle';
+  /**
+   * 探索快照缓存。
+   * - `enabled === false` 完全跳过读/写（CLI `--no-explore-cache` 走这条路）
+   * - 未传则默认启用
+   * - `storageStateFingerprint` 用于多角色场景，避免不同登录态共用同一份快照
+   */
+  cache?: {
+    enabled?: boolean;
+    dir?: string;
+    ttlMs?: number;
+    storageStateFingerprint?: string;
+  };
 }
 
 export interface ExploreResult {
@@ -30,6 +47,11 @@ export interface ExploreResult {
   accessibilitySnapshot: string;
   interactiveElements: string;
   durationMs: number;
+  /**
+   * 当前结果是否命中缓存。命中时 durationMs = 0（未实际启动浏览器）。
+   * 字段为可选是为了向后兼容已有调用方；默认 false。
+   */
+  fromCache?: boolean;
 }
 
 export async function explorePage(options: ExploreOptions): Promise<ExploreResult> {
@@ -37,6 +59,26 @@ export async function explorePage(options: ExploreOptions): Promise<ExploreResul
   const timeoutMs = options.timeoutMs ?? 15_000;
   const maxElements = options.maxElements ?? 200;
   const waitUntil = options.waitUntil ?? 'domcontentloaded';
+  const cacheEnabled = options.cache?.enabled !== false;
+
+  const cacheKeyParams: ExploreCacheKeyParams = {
+    url: options.url,
+    headless,
+    timeoutMs,
+    maxElements,
+    waitUntil,
+    storageStateFingerprint: options.cache?.storageStateFingerprint,
+  };
+
+  // 1. 先查缓存。命中直接返回，跳过浏览器启动。
+  if (cacheEnabled) {
+    const dir = options.cache?.dir ?? '.auto-test/cache/explore';
+    const hit = readExploreCache(cacheKeyParams, { dir });
+    if (hit) {
+      logger.info(`[explore] 缓存命中，跳过浏览器: ${hit.title} (${hit.url})`);
+      return hit;
+    }
+  }
 
   const start = Date.now();
 
@@ -62,13 +104,23 @@ export async function explorePage(options: ExploreOptions): Promise<ExploreResul
     const accessibilitySnapshot = await extractAccessibilityTree(page, maxElements);
     const interactiveElements = await collectInteractiveElements(page, maxElements);
 
-    return {
+    const result: ExploreResult = {
       url: finalUrl,
       title,
       accessibilitySnapshot,
       interactiveElements,
       durationMs: Date.now() - start,
+      fromCache: false,
     };
+
+    // 2. 探索成功才落缓存。失败/异常不会污染缓存。
+    if (cacheEnabled) {
+      const dir = options.cache?.dir ?? '.auto-test/cache/explore';
+      const ttlMs = options.cache?.ttlMs ?? 600_000;
+      writeExploreCache(cacheKeyParams, result, { dir, ttlMs });
+    }
+
+    return result;
   } catch (err) {
     throw new CliError({
       code: ExitCode.AGENT_ERROR,

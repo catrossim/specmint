@@ -26,6 +26,18 @@ export interface CaseToolsContext {
   defaultSourceType: 'generated';
   /** generate 命令行 --priority 参数，作为 priority 字段缺失时的兜底 */
   defaultPriority: Priority;
+  /**
+   * generate 命令行 --module 参数。
+   * - 非空时：save_case 强制覆盖 PI 输入的 module 字段
+   * - 未传时：允许 PI 自由推断
+   */
+  defaultModule?: string;
+  /**
+   * generate 命令行 --group 参数（kebab-case）。
+   * - 非空时：save_case 强制覆盖 PI 输入的 group 字段并校验 name 前缀一致
+   * - 未传时：允许 PI 自由推断
+   */
+  defaultGroup?: string;
 }
 
 // --- typebox 参数 schema ---
@@ -95,6 +107,12 @@ const ListCasesParams = Type.Object({
   tag: Type.Optional(Type.String({ description: '按 tag 过滤' })),
   pattern: Type.Optional(Type.String({ description: '按 name 子串过滤' })),
   priority: Type.Optional(PriorityEnum),
+  module: Type.Optional(
+    Type.String({ description: '按模块中文名过滤（精确匹配 meta.module）' }),
+  ),
+  group: Type.Optional(
+    Type.String({ description: '按功能模块分组过滤（kebab-case，匹配 meta.group 或 name 前缀）' }),
+  ),
 });
 
 const ReadCaseParams = Type.Object({
@@ -139,18 +157,30 @@ export function createCaseTools(ctx: CaseToolsContext): ToolDefinition[] {
       name: 'save_case',
       label: 'Save Case',
       description:
-        '保存一个新用例到 tests/<name>.spec.ts + <name>.meta.json；已存在同名用例会报错。',
+        '保存一个新用例到 tests/<name>.spec.ts + <name>.meta.json；已存在同名用例会报错。' +
+        '若 name 含 "<group>/" 前缀则物理目录与 meta.group 都按 group 写入。' +
+        'CLI --module/--group 会强制覆盖 PI 输入的 module / group 字段。',
       parameters: SaveCaseParams,
       execute: async (_toolCallId, params) => {
         try {
+          // CLI --group / --module 强制覆盖 PI 输入
+          const group = ctx.defaultGroup ?? params.group;
+          const module = ctx.defaultModule ?? params.module;
+
+          // 当 CLI 指定了 group 但 PI 提供的 name 没带前缀时，自动加上前缀以保持物理目录一致
+          let name = params.name;
+          if (group && !name.includes('/')) {
+            name = `${group}/${name}`;
+          }
+
           const result = ctx.caseStore.save(
             {
-              name: params.name,
+              name,
               description: params.description,
               priority: ctx.defaultPriority, // CLI --priority 强制覆盖 PI 输入
               tags: params.tags,
-              group: params.group,
-              module: params.module,
+              group,
+              module,
               linkedTickets: params.linkedTickets,
               source: {
                 type: ctx.defaultSourceType,
@@ -170,7 +200,7 @@ export function createCaseTools(ctx: CaseToolsContext): ToolDefinition[] {
           return okResult({
             specPath: result.specPath,
             metaPath: result.metaPath,
-            message: `用例 ${params.name} 已保存`,
+            message: `用例 ${name} 已保存`,
           });
         } catch (err) {
           return errorResult('save_case', err);
@@ -216,13 +246,16 @@ export function createCaseTools(ctx: CaseToolsContext): ToolDefinition[] {
     defineTool({
       name: 'list_cases',
       label: 'List Cases',
-      description: '列出用例库中的用例摘要，支持按 tag 与 name 子串过滤。',
+      description:
+        '列出用例库中的用例摘要，支持按 tag、name 子串、priority、module、group 过滤。',
       parameters: ListCasesParams,
       execute: async (_toolCallId, params) => {
         const items = ctx.caseStore.list({
           tag: params.tag,
           pattern: params.pattern,
           priority: params.priority,
+          module: params.module,
+          group: params.group,
         });
         return okResult({ count: items.length, items });
       },

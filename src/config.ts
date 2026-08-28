@@ -42,6 +42,21 @@ export interface AutoTestConfig {
     timeoutMs: number;
     maxElements: number;
     waitUntil: ExploreWaitUntil;
+    /**
+     * 探索快照缓存：避免同 URL 重复启动浏览器（实测省 5~15s/用例）。
+     *
+     * - `enabled=false` 跳过读写（CLI `--no-explore-cache` 也能关闭单次调用）
+     * - `ttlMs` 默认 10 分钟，过期自动失效
+     * - `dir` 默认 `.auto-test/cache/explore`，文件命名 `<key>.json`
+     *
+     * 注意：快照里不含登录态；如需按角色缓存，调用方可在 storageState 指纹里
+     * 注入角色标识，详见 agent/explore-cache.ts 的 storageStateFingerprint。
+     */
+    cache?: {
+      enabled?: boolean;
+      ttlMs?: number;
+      dir?: string;
+    };
   };
   generation: {
     selectorPolicy: { prefer: string[]; avoid: string[] };
@@ -103,6 +118,11 @@ export const DEFAULT_CONFIG: AutoTestConfig = {
     timeoutMs: 15000,
     maxElements: 200,
     waitUntil: 'domcontentloaded',
+    cache: {
+      enabled: true,
+      ttlMs: 600_000, // 10 分钟
+      dir: '.auto-test/cache/explore',
+    },
   },
   generation: {
     selectorPolicy: {
@@ -202,10 +222,18 @@ function parseConfigFile(path: string): AutoTestConfig {
 
 function mergeConfig(base: AutoTestConfig, override: Record<string, unknown>): AutoTestConfig {
   const overrideAuth = override.auth as Partial<AutoTestConfig['auth']> | undefined;
+  const overrideExplore = override.explore as Record<string, unknown> | undefined;
+  const baseExploreCache = (base.explore.cache ?? {}) as Record<string, unknown>;
+  const overrideExploreCache = (overrideExplore?.cache as Record<string, unknown> | undefined) ?? {};
   return {
     version: '1',
     agent: { ...base.agent, ...((override.agent as object | undefined) ?? {}) },
-    explore: { ...base.explore, ...((override.explore as object | undefined) ?? {}) },
+    explore: {
+      ...base.explore,
+      ...(overrideExplore ?? {}),
+      // 单独合并 cache 子对象，避免 `enabled=false` 被默认 `true` 覆盖
+      cache: { ...baseExploreCache, ...overrideExploreCache },
+    },
     generation: {
       ...base.generation,
       ...((override.generation as object | undefined) ?? {}),

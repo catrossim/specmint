@@ -111,6 +111,10 @@ export interface CaseSummary {
   description: string;
   priority?: Priority;
   auth?: string;
+  /** 功能模块中文名（来自 meta.module），便于按模块聚合展示 */
+  module?: string;
+  /** 功能模块分组（来自 meta.group，与 name 前缀一致），与物理子目录对应 */
+  group?: string;
   tags: string[];
   status: CaseStatus;
   lastRunAt: string | null;

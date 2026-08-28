@@ -1,4 +1,4 @@
-# auto-test 使用文档（v2）
+# auto-test 使用文档（v2.1）
 
 面向测试工程师的完整使用指南。
 
@@ -11,13 +11,16 @@ my-project/
 ├── .gitignore                         # init 追加 .auto-test/reports/ 等规则
 └── .auto-test/                         # auto-test 全部产物
     ├── config.json                    # 项目配置（位置不可改）
-    ├── playwright.config.ts           # Playwright 配置（位置不可改）├── cases/                            # 用例库（递归支持 group/）
-    │   └── auth/login-success.spec.ts
+    ├── playwright.config.ts           # Playwright 配置（位置不可改）
+    ├── cases/                          # 用例库（递归支持 group/）
+    │   ├── auth/login-success.spec.ts
     │   └── auth/login-success.meta.json
     ├── cases/pages/                    # POM
     ├── auth/                           # 登录态子系统
     │   ├── admin.setup.ts              # 登录流程
     │   └── storage/admin.json          # storageState（gitignore）
+    ├── cache/                          # v2.1+ 探索快照缓存（gitignore）
+    │   └── explore/<hash>.json         # key = hash(URL + storageState)
     └── reports/                        # 运行产物（gitignore）
         └── runs/<ts>/run.json
 ```
@@ -40,7 +43,7 @@ my-project/
 
 `agent.model` 必填（用 `auto-test models select` 选，或手动从 pi-agent 复制）。
 
-### 完整配置（含 auth）
+### 完整配置（含 v2.1 缓存）
 
 ```json
 {
@@ -54,7 +57,12 @@ my-project/
     "headless": true,
     "timeoutMs": 15000,
     "maxElements": 200,
-    "waitUntil": "domcontentloaded"
+    "waitUntil": "domcontentloaded",
+    "cache": {
+      "enabled": true,
+      "ttlMs": 600000,
+      "dir": ".auto-test/cache/explore"
+    }
   },
   "generation": {
     "selectorPolicy": {
@@ -88,8 +96,11 @@ my-project/
 | `runner.defaultBrowser` | 否 | `chromium` \| `firefox` \| `webkit` |
 | `auth.headers` | 否 | 注入到 Playwright `extraHTTPHeaders` |
 | `auth.extraHTTPHeaders` | 否 | 同 `headers`，两者合并 |
-| `auth.cookies` | 否 |cookie 列表（schema 预留，阶段 2 完整支持）
+| `auth.cookies` | 否 | cookie 列表（schema 预留，阶段 2 完整支持） |
 | `auth.storageState` | 否 | Playwright `storageState` 路径 |
+| `explore.cache.enabled` | 否 | 是否启用探索快照缓存，默认 `true` |
+| `explore.cache.ttlMs` | 否 | 快照有效期（毫秒），默认 `600000`（10 分钟） |
+| `explore.cache.dir` | 否 | 缓存目录，相对 `.auto-test/` 解析 |
 
 ## 3. 用例元数据
 
@@ -116,7 +127,7 @@ my-project/
 | 字段 | 必填 | 校验 |
 |------|------|------|
 | `name` | 是 | kebab-case，可含 `group/name` 形式 |
-| `priority`| **是** | enum `P0\|P1\|P2\|P3` |
+| `priority` | **是** | enum `P0\|P1\|P2\|P3` |
 | `group` | 否 | kebab-case（物理子目录分组）|
 | `module` | 否 | 中文模块名 |
 | `linkedTickets` | 否 | 字符串数组 |
@@ -141,9 +152,22 @@ my-project/
 
 用例名 = `auth/login-success`，PI 生成时 PI 自动推断 group + module。
 
+### CLI 覆盖 PI 输出（v2.1+）
+
+如果 PI 推断的 `group` / `module` 不符合期望，generate 命令支持直接锁定：
+
+```bash
+auto-test generate "登录失败提示" --priority P1 \
+  --group auth --module 用户认证
+```
+
+覆盖后的值不经过归一化层，直接落盘到 meta.json，并决定物理目录结构。
+
 ## 4. 命令清单
 
-### 初始化```bash
+### 初始化
+
+```bash
 auto-test init                 # 创建 .auto-test/ 布局
 auto-test init --force         # 强制覆盖已存在的配置
 ```
@@ -152,17 +176,24 @@ auto-test init --force         # 强制覆盖已存在的配置
 
 ```bash
 auto-test models list                    # 列可用（已登录）
-auto-test models list --all             # 列全部（含未登录）
-auto-test models current                # 查看当前
-auto-test models select                 # 交互式选择
+auto-test models list --all              # 列全部（含未登录）
+auto-test models current                 # 查看当前
+auto-test models select                  # 交互式选择
 ```
 
 ### 用例库
 
 ```bash
-auto-test generate "<desc>" --priority P0           # 必传 priority
+# 生成（v2.1 增加 --module / --group / --no-explore-cache）
+auto-test generate "<desc>" --priority P0
 auto-test generate "<desc>" --priority P1 --url https://example.com --page-object
+auto-test generate "<desc>" --priority P0 --module 用户认证 --group auth
+auto-test generate "<desc>" --priority P0 --no-explore-cache   # 强制刷新探索快照
+
+# 列表（v2.1 增加 --module / --group）
 auto-test list [--tag X] [--priority P0,P1] [--auth admin]
+auto-test list --module 用户认证 --group auth --json
+
 auto-test show auth/login-success
 auto-test delete auth/login-success
 ```
@@ -172,7 +203,7 @@ auto-test delete auth/login-success
 ```bash
 auto-test auth init admin               # 生成手写模板
 auto-test auth generate "<desc>" --name admin    # PI 生成
-auto-test auth refresh admin            # 重跑 setup →生成 storageState
+auto-test auth refresh admin            # 重跑 setup → 生成 storageState
 auto-test auth list                     # 列所有 setup + 状态
 ```
 
@@ -199,7 +230,7 @@ auto-test heal auth/login-success                # 自愈
 ```
 CLI flag (--header / --storage-state / --no-auth)
   ↓
-process.env (AUTO_TEST_HEADER_<KEY> /AUTO_TEST_STORAGE_STATE / AUTO_TEST_NO_AUTH / BASE_URL / AUTH_TOKEN)
+process.env (AUTO_TEST_HEADER_<KEY> / AUTO_TEST_STORAGE_STATE / AUTO_TEST_NO_AUTH / BASE_URL / AUTH_TOKEN)
   ↓
 .auto-test/config.json 的 auth 段
   ↓
@@ -233,7 +264,9 @@ Playwright 默认值
   env:
     AUTH_TOKEN: ${{ secrets.STAGING_TOKEN }}
     BASE_URL: ${{ vars.STAGING_URL }}
-```## 6. 登录态管理（auth 子系统）
+```
+
+## 6. 登录态管理（auth 子系统）
 
 ### 目录约定
 
@@ -263,7 +296,9 @@ auto-test auth refresh admin
 
 ### Playwright 自动配置
 
-`init` 渲染的 `.auto-test/playwright.config.ts` 自动拆 projects：```typescript
+`init` 渲染的 `.auto-test/playwright.config.ts` 自动拆 projects：
+
+```typescript
 projects: [
   { name: 'auth-setup', testMatch: /\.setup\.ts$/, testDir: './auth' },
   { name: 'e2e', testDir: './cases', dependencies: ['auth-setup'], use: { ... } }
@@ -281,6 +316,7 @@ projects: [
 ```
 
 跑用例：
+
 ```bash
 auto-test run --auth admin
 ```
@@ -291,13 +327,14 @@ auto-test run --auth admin
 
 ## 7. PI 输出契约（generate）
 
-`generate` 命令 prompt 里硬约束 LLM：- `priority` 必须用 enum（PI 不能改，由 CLI `--priority` 锁定）
+`generate` 命令 prompt 里硬约束 LLM：
+- `priority` 必须用 enum（PI 不能改，由 CLI `--priority` 锁定）
 - `group` 必须是 kebab-case
 - `module` 用中文
 - `linkedTickets` 是字符串数组
 - `tags` 是小写 kebab-case
 
-LLLM 输出仍可能不规范，**归一化层兜底**（`src/utils/normalize-meta.ts`）：
+LLM 输出仍可能不规范，**归一化层兜底**（`src/utils/normalize-meta.ts`）：
 - `"高"` / `p0` / `"urgent"` / `"critical"` → `P0`
 - `"中"` / `"medium"` → `P2`
 - 其他不规范字段 → warning + 忽略（不阻塞保存）
@@ -306,11 +343,69 @@ LLLM 输出仍可能不规范，**归一化层兜底**（`src/utils/normalize-me
 - `name` / `priority` 不合规 → throw（必填 + 强 enum）
 - `group` / `module` / `linkedTickets` / `tags` → warning + 跳过
 
-## 8. 退出码
+**CLI 强制覆盖（v2.1+）**：
+
+```bash
+auto-test generate "登录失败提示" \
+  --priority P1 \
+  --module 用户认证 \
+  --group auth
+```
+
+`--module` 和 `--group` 会在 prompt 里以最高优先级告知 PI，绕过归一化层直接落盘，避免 PI 自由发挥产生脏目录。
+
+## 8. 探索快照缓存（v2.1+）
+
+### 用途
+
+`generate --url` 在浏览器里打开 URL、抓 a11y 快照再让 LLM 看。当一个 URL 被反复生成（同一页面不同用例）时，每次都开浏览器很慢。
+
+v2.1 把 `(URL + storageState)` 的快照落盘到 `.auto-test/cache/explore/`，TTL 内复用。
+
+### 启用 / 禁用
+
+- 默认 `explore.cache.enabled = true`
+- 全局关闭：`explore.cache.enabled = false`
+- 单次跳过：`auto-test generate ... --no-explore-cache`
+- 手动清理：删除 `.auto-test/cache/` 或 `rm -rf .auto-test/cache/explore/*`
+
+### 命中判定
+
+缓存 key = `sha256(URL + storageState)`（按文件指纹 / mtime 计算），相同 (URL, 角色) 才命中：
+
+```
+URL: https://example.com/login  +  storageState: .auto-test/auth/storage/admin.json
+  → cache/explore/<hash>.json
+```
+
+storageState 变化（例如切换 `auth/admin` → `auth/anonymous`）会自动失效。
+
+### 何时该强制刷新
+
+- 后端页面结构发生变化（CSS 类、a11y role 等）
+- 想验证最新 DOM 是否有新元素
+- 调试某个用例时希望看到原始快照
+
+加 `--no-explore-cache` 或 `rm` 对应 `.json` 即可。
+
+## 9. 少样本示例库（v2.1+）
+
+`src/agent/templates/` 内联了 4 套场景的完整样例（`login-flow` / `form-submit` / `list-search` / `detail-page`），`prompts.ts` 的 `pickExample()` 会按描述关键词自动挑选一个塞进 system prompt，作为 few-shot。
+
+挑选规则（关键词命中优先级）：
+1. 包含 "登录 / login / signin" → `login-flow`
+2. 包含 "提交 / 表单 / submit / form" → `form-submit`
+3. 包含 "列表 / 搜索 / list / search" → `list-search`
+4. 包含 "详情 / detail" → `detail-page`
+5. 兜底：`form-submit`
+
+样式更稳；用户可在 prompt 里强制走哪个场景，未来版本计划支持 `--example <name>` 显式指定。
+
+## 10. 退出码
 
 | 码 | 含义 |
 |----|------|
-| 0 |成功 |
+| 0 | 成功 |
 | 2 (USAGE_ERROR) | 参数错误 |
 | 3 (NOT_IMPLEMENTED) | 子命令未实现 |
 | 4 (NOT_FOUND) | 资源不存在 |
@@ -319,7 +414,7 @@ LLLM 输出仍可能不规范，**归一化层兜底**（`src/utils/normalize-me
 | 7 (TEST_FAILED) | 测试失败 |
 | 8 (IO_ERROR) | IO 错误 |
 
-## 9. 常见问题
+## 11. 常见问题
 
 ### Q：路径能改成 `e2e/` 吗？
 
@@ -331,7 +426,9 @@ LLLM 输出仍可能不规范，**归一化层兜底**（`src/utils/normalize-me
 
 ### Q：项目根污染怎么办？
 
-v2 后不存在。**老项目**手动删 `tests/`、`reports/`、`auto-test.config.json`（项目根），然后跑 `auto-test init` 重建。### Q：需要多角色怎么办？
+v2 后不存在。**老项目**手动删 `tests/`、`reports/`、`auto-test.config.json`（项目根），然后跑 `auto-test init` 重建。
+
+### Q：需要多角色怎么办？
 
 v2 默认单一角色。流程：
 1. 先用一个角色跑完所有用例
@@ -352,7 +449,27 @@ v2 默认单一角色。流程：
 
 强制约束在 `--priority` 锁定。如果发现 PI 输出 P1 但 CLI 传 P0，检查 `src/agent/tools.ts` 的 `save_case.execute`：应使用 `ctx.defaultPriority`。
 
-## 10. 升级指南（v1 → v2）
+### Q：PI 生成的 group 不对怎么办（v2.1+）？
+
+generate 命令支持 `--group` / `--module` 强制锁定，传了之后跳过归一化层直接落盘：
+
+```bash
+auto-test generate "登录失败提示" --priority P1 --group auth --module 用户认证
+```
+
+### Q：探索快照多久失效？
+
+`explore.cache.ttlMs` 默认 600000ms（10 分钟）。过期或 storageState 改变都会自动重建。
+
+### Q：能关掉探索快照缓存吗？
+
+- 配置：`explore.cache.enabled = false`
+- 单次：`auto-test generate ... --no-explore-cache`
+- 物理：`rm -rf .auto-test/cache/explore/`
+
+## 12. 升级指南
+
+### v1 → v2
 
 1. 删项目根的 `auto-test.config.json` 和 `playwright.config.ts`
 2. 删项目根的 `tests/` 和 `reports/`（如有）
@@ -361,3 +478,10 @@ v2 默认单一角色。流程：
 5. 跑 `auto-test auth init <role>`（如需登录态）
 6. 跑 `auto-test generate "<desc>" --priority P0` 开始
 
+### v2 → v2.1
+
+完全向后兼容：
+
+- 首次运行会自动创建 `.auto-test/cache/`
+- 旧项目无 `explore.cache` 配置时取默认值（启用、TTL 10 分钟）
+- 想强制冷启动：`rm -rf .auto-test/cache/`

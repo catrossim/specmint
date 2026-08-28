@@ -148,7 +148,7 @@ export class CaseStore {
    * - 默认按 name 升序
    * - 递归扫描 casesDir 下所有子目录，支持按 group（功能模块）分目录
    * - meta.json 缺失或解析失败时跳过并 warning
-   * - 支持按 tag、name 子串、priority（单个或数组）过滤
+   * - 支持按 tag、name 子串、priority（单个或数组）、auth、module、group 过滤
    */
   list(
     filter: {
@@ -156,6 +156,8 @@ export class CaseStore {
       pattern?: string;
       priority?: Priority | Priority[];
       auth?: string;
+      module?: string;
+      group?: string;
     } = {},
   ): CaseSummary[] {
     if (!existsSync(this.casesDir)) return [];
@@ -195,16 +197,26 @@ export class CaseStore {
       if (filter.tag && !meta.tags.includes(filter.tag)) continue;
       if (priorityFilter && (!meta.priority || !priorityFilter.has(meta.priority))) continue;
       if (filter.auth && meta.auth !== filter.auth) continue;
+      // module / group 过滤：按 meta 字段精确匹配；name 前缀与 group 等价时也允许匹配
+      if (filter.group) {
+        const groupFromName = name.includes('/') ? name.split('/')[0] : null;
+        const effectiveGroup = meta.group ?? groupFromName ?? null;
+        if (effectiveGroup !== filter.group) continue;
+      }
+      if (filter.module && meta.module !== filter.module) continue;
 
       const pomRelative = meta.pageObject.enabled && meta.pageObject.file
         ? pathRelative(this.cwd, resolve(this.casesDir, meta.pageObject.file))
         : null;
 
+      const groupFromName = name.includes('/') ? name.split('/')[0] : null;
       summaries.push({
         name,
         description: meta.description,
         priority: meta.priority,
         auth: meta.auth,
+        module: meta.module ?? undefined,
+        group: meta.group ?? groupFromName ?? undefined,
         tags: meta.tags,
         status: meta.stats.lastStatus,
         lastRunAt: meta.stats.lastRunAt,

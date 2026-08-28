@@ -32,4 +32,6 @@ test-results/
 .env.*.local
 # auto-test
 .auto-test/reports/runs/*/.tmp/
+.auto-test/reports/runs/
+.auto-test/cache/
 .auto-test/.env

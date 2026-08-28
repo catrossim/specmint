@@ -33,6 +33,8 @@ const DEFAULT_DIRECTORIES = [
   '.auto-test/reports/runs',
   '.auto-test/auth',
   '.auto-test/auth/storage',
+  '.auto-test/cache',
+  '.auto-test/cache/explore',
 ];
 
 /**
@@ -76,6 +78,7 @@ const DEFAULT_CONFIG_OBJECT = {
 const GITIGNORE_ADDITIONS = [
   '.auto-test/reports/runs/*/.tmp/',
   '.auto-test/.env',
+  '.auto-test/cache/', // 探索快照缓存，可重新生成
 ];
 
 /**
