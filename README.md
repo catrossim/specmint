@@ -163,7 +163,13 @@ $ specmint review
 
 单键裁决：`a` approved / `n` needs-fix / `r` rejected / `s` skipped / `q` 退出。逐条翻页，无需重新加载列表。
 
-非 TTY（脚本/CI 场景）自动降级为 `specmint review list`。
+REPL 默认只看 `verdict=pending`。想重新翻已裁决项（重审）：
+
+```bash
+specmint review --include-decided   # REPL 翻全部（含 approved/needs-fix/rejected）
+```
+
+非 TTY（脚本/CI 场景）自动降级为 `specmint review list`，可加 `--all` 查看全部：
 
 ### 脚本/CI 场景
 

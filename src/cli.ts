@@ -295,7 +295,10 @@ const reviewCmd = program
     '只过这 N 条（逗号分隔），与 generate 末尾挂点配合使用',
     (v: string) => v.split(',').map((s) => s.trim()).filter(Boolean),
   )
-  .option('--all', 'REPL 内不过滤 pending，也处理已 approved / needs-fix / rejected 等已裁决项')
+  .option(
+    '--include-decided',
+    'REPL 内不只翻 pending，也重新处理已 approved / needs-fix / rejected 等已裁决项；等价 `review list --all` 的语义',
+  )
   .option(
     '--preview-lines <n>',
     'REPL 内每条用例显示的 spec.ts 最大行数（默认 30）',
@@ -308,13 +311,19 @@ const reviewCmd = program
     },
   )
   .option('--json', '输出 JSON 格式')
-  .action(async (options: Parameters<typeof reviewInteractiveCommand>[1]) => {
+  .action(async (options: Parameters<typeof reviewInteractiveCommand>[1] & { includeDecided?: boolean }) => {
     const cwd = process.cwd();
+    // commander.js 同名 option 冲突：主命令用 --include-decided，
+    // 子命令 review list 用 --all；REPL 这边手动映射回 opts.all
+    const opts: Parameters<typeof reviewInteractiveCommand>[1] = {
+      ...options,
+      all: !!options.includeDecided,
+    };
     if (canPromptInteractive()) {
-      await reviewInteractiveCommand(cwd, options);
+      await reviewInteractiveCommand(cwd, opts);
     } else {
       // 非交互式终端：降级为 list，避免静默把全部 pending 默标 approved
-      await reviewListCommand({});
+      await reviewListCommand({ all: !!options.includeDecided });
     }
   });
 
