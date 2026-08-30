@@ -104,10 +104,118 @@ npx specmint heal login-e2e
 | `show <name>` | 查看用例详情（含 spec 与 POM 代码） |
 | `delete <name> [--yes]` | 删除用例 |
 | `history [--limit N] [--case <name>]` | 查看运行历史 |
-| `heal <name> [--from <runId>]` | 自动修复失败用例 |
+| `heal <name> [--from <runId>]` | 自动修复失败用例（v0.3+ 仅 verdict=needs-fix 可被 heal；--include-* / --force 放宽） |
+| `review [list \| set <case> \| show <case>]` | 人工裁决用例（v0.3+ 默认仅 TTY 进 REPL 翻页裁决） |
 | `skill export [--target codebuddy\|claude-code]` | 导出 agent skill 定义到 `./skills/specmint/SKILL.md` |
 
 所有子命令支持 `--json` 输出。
+
+---
+
+## 前端元素契约（可选）
+
+specmint 默认用语义定位器（role/label/placeholder）生成 Playwright 用例。
+当团队维护了一份"前端元素契约"——一份带 `data-testid` 的元素清单——specmint 会在生成时把契约注入 prompt，让 LLM 直接采用约定的定位器，避免命名风格漂移。
+
+契约文件固定路径：`.specmint/contract.json`（与 `config.json` 同策略，**路径不可配置**）。
+
+**契约缺失时的行为**：与现状字节级一致——specmint 静默跳过注入，按现有策略生成。契约**完全可选**，不影响任何现有项目。
+
+**契约不合法时的行为**：JSON 解析失败 / version 不匹配 / elements 非数组 → 立即报错并退出，避免契约版本错位时静默加载。
+
+完整指南（前置知识、JSON 结构、操作步骤、示例、FAQ）：[docs/element-contract.md](./docs/element-contract.md)
+
+---
+
+## review 人工裁决（v0.3+）
+
+`review` 把人工仲裁从「写个字段」升级为运行时执行关卡：裁决结果（verdict）直接决定 `run` / `heal` 是否放行某个用例，避免未审核 / 待修复 / 已废弃的用例污染 CI 产物。
+
+### 状态机
+
+```
+pending ──[a]pprove──→ approved ──[r]eject──→ rejected ──(人工回归)
+   │                      │
+   │                      └─[n]eeds-fix──→ needs-fix ──(heal)──┐
+   ├─[s]kip────────────→ skipped (历史保留)                    │
+   │                     ↑                                      │
+   └─────────────────────┴──────────[ 任何 ]──────────────────┘
+```
+
+verdict 状态机共 5 态：`pending` / `approved` / `needs-fix` / `rejected` / `skipped`。
+
+### 与 run / heal 的联动
+
+| 命令 | 默认行为 | 放宽标志 |
+|---|---|---|
+| `specmint run` | 仅跑 `verdict=approved` | `--include-pending` / `--include-needs-fix` / `--include-rejected` / `--force` / `--no-require-review` |
+| `specmint rerun` | 与 run 一致 | 与 run 一致 |
+| `specmint heal` | 仅修 `verdict=needs-fix` | `--include-pending` / `--include-approved` / `--include-rejected` / `--force` / `--no-require-review` |
+
+### REPL 翻页裁决（默认入口）
+
+```bash
+$ specmint review
+[1/12] auth/login-success                       pending
+  spec: 用户在登录页输入正确的账号密码，点击登录，跳转到首页
+  > 选择裁决 [a/p/n/r/s/q]: _
+```
+
+单键裁决：`a` approved / `n` needs-fix / `r` rejected / `s` skipped / `q` 退出。逐条翻页，无需重新加载列表。
+
+非 TTY（脚本/CI 场景）自动降级为 `specmint review list`。
+
+### 脚本/CI 场景
+
+```bash
+# 单条裁决
+specmint review set auth/login-success --verdict approved --reviewer alice
+specmint review set auth/login-failure --verdict needs-fix --reason "selector 飘"
+
+# 批量过滤
+specmint review list --verdict needs-fix
+
+# 查看详情
+specmint review show auth/login-success
+```
+
+### 配置
+
+```jsonc
+{
+  "review": {
+    "requireBeforeRun":  true,                              // run 卡口开关
+    "requireBeforeHeal": true,                              // heal 卡口开关
+    "pendingOnGenerate": true,                              // generate 后是否提示进入 review REPL
+    "reviewerSource":    "git-user",                        // 默认裁决人来源：git-user / env / none
+    "blockedOnRun":      ["pending", "needs-fix", "rejected"],
+    "blockedOnHeal":     ["pending", "approved", "rejected", "skipped"]
+  }
+}
+```
+
+完全关闭卡口（回到 v0.2.0 老行为）：
+
+```jsonc
+{
+  "review": {
+    "requireBeforeRun":  false,
+    "requireBeforeHeal": false
+  }
+}
+```
+
+或在运行时加 `--no-require-review` / `--force`。
+
+### 回滚到 v0.2.0 老行为
+
+如果 CI 突然少跑用例，或团队还没建立 review 流程，可在 `.specmint/config.json` 中：
+
+```jsonc
+{ "review": { "requireBeforeRun": false, "requireBeforeHeal": false } }
+```
+
+无需改任何代码，所有 v0.2.0 的命令 / 标志 / 行为都保留。
 
 ---
 
@@ -357,7 +465,7 @@ MIT — 详见 [LICENSE](./LICENSE)。
 
 ## 更新日志
 
-完整变更记录（v2 → v2.3）见 [CHANGELOG.md](./CHANGELOG.md)。当前发布版本 `0.1.0` 聚合了所有内部迭代能力。
+完整变更记录（v2 → v2.4）见 [CHANGELOG.md](./CHANGELOG.md)。当前发布版本 `0.2.0` 聚合了所有内部迭代能力。
 
 ---
 

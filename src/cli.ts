@@ -9,7 +9,8 @@
  * - rerun: 历史中失败用例 → runTests
  * - list / show / delete: 用例库 CRUD
  * - history: 运行历史查询
- * - heal: 失败用例 → pi-agent → update_case
+ * - heal: 失败用例 → pi-agent → update_case（仅 verdict=needs-fix 生效）
+ * - review: 人工裁决（默认 REPL；set / list / show 子命令）
  * - skill export: 导出 agent skill 定义
  */
 import { Command } from 'commander';
@@ -34,9 +35,16 @@ import {
   authRefreshCommand,
   authGenerateCommand,
 } from './commands/auth.js';
+import {
+  reviewInteractiveCommand,
+  reviewListCommand,
+  reviewSetCommand,
+  reviewShowCommand,
+} from './commands/review.js';
 import { CliError, ExitCode } from './utils/errors.js';
 import { logger } from './utils/logger.js';
-import { PRIORITIES, type Priority } from './store/types.js';
+import { canPromptInteractive } from './utils/prompt.js';
+import { PRIORITIES, REVIEW_VERDICTS, type Priority, type ReviewVerdict } from './store/types.js';
 
 const program = new Command();
 
@@ -51,7 +59,7 @@ function collectSetParam(value: string, previous: Record<string, string> = {}): 
 program
   .name('specmint')
   .description('面向 agent 的 Playwright 页面测试 CLI 工具')
-  .version('0.1.0')
+  .version('0.2.0')
   .option('--json', '全局 JSON 输出模式')
   .hook('preAction', (thisCommand) => {
     const opts = thisCommand.opts<{ json?: boolean }>();
@@ -158,7 +166,7 @@ program
 // --- run ---
 program
   .command('run [pattern]')
-  .description('运行测试用例')
+  .description('运行测试用例（默认仅跑 verdict=approved 的用例；用 --include-* 标志可放宽）')
   .option('--browser <browser>', '指定浏览器：chromium|firefox|webkit')
   .option('--headed', '有头模式')
   .option('--ui', '使用 Playwright UI 模式')
@@ -183,6 +191,11 @@ program
     '--label <slug>',
     '批次语义标签（kebab-case，1-32 字符），会拼到批次号末尾，例如 --label smoke → 2026-08-27_150059-smoke',
   )
+  .option('--include-pending', '同时跑 verdict=pending 的用例（默认排除）')
+  .option('--include-needs-fix', '同时跑 verdict=needs-fix 的用例（默认排除）')
+  .option('--include-rejected', '同时跑 verdict=rejected 的用例（默认排除）')
+  .option('--force', '对单条用例忽略 verdict 检查（一直跑），关闭 warning 输出')
+  .option('--no-require-review', '关闭 verdict 卡口，回到老行为（跑所有 enabled 用例）')
   .option('--json', '输出 JSON 格式')
   .option(
     '--config <path>',
@@ -193,8 +206,13 @@ program
 // --- rerun ---
 program
   .command('rerun')
-  .description('重跑最近一次失败用例')
+  .description('重跑最近一次失败用例（沿用 run 的 verdict 过滤）')
   .option('--from <runId>', '指定运行 ID（默认最近一次）')
+  .option('--include-pending', '同时跑 verdict=pending 的用例')
+  .option('--include-needs-fix', '同时跑 verdict=needs-fix 的用例')
+  .option('--include-rejected', '同时跑 verdict=rejected 的用例')
+  .option('--force', '忽略 verdict 检查')
+  .option('--no-require-review', '关闭 verdict 卡口')
   .option('--json', '输出 JSON 格式')
   .action(rerunCommand);
 
@@ -216,6 +234,7 @@ program
   .option('--auth <name>', '按 auth 角色过滤')
   .option('--module <module>', '按模块中文名过滤（精确匹配 meta.module）')
   .option('--group <group>', '按功能分组过滤（kebab-case，匹配 meta.group 或 name 前缀）')
+  .option('--require-review', '只看 review.verdict=approved 的用例')
   .option('--json', '输出 JSON 格式')
   .action(listCommand);
 
@@ -245,14 +264,106 @@ program
   .action(historyCommand);
 
 // --- heal ---
+// P1：heal 仅对 verdict=needs-fix 工作；其它 verdict 默认被卡口过滤
+// 用 --include-* 标志可放宽；--force 完全关闭卡口
 program
   .command('heal <name>')
-  .description('自动修复失败用例')
+  .description('自动修复失败用例（仅 verdict=needs-fix 生效，其它 verdict 默认被卡口过滤，用 --include-* 放宽）')
   .option('--from <runId>', '指定失败来源的运行 ID（默认最近一次）')
+  .option('--include-pending', '同时允许 verdict=pending 的用例被 heal（默认排除）')
+  .option('--include-approved', '同时允许 verdict=approved 的用例被 heal（默认排除）')
+  .option('--include-rejected', '同时允许 verdict=rejected 的用例被 heal（默认排除）')
+  .option('--force', '忽略 verdict 检查，对任意 verdict 都尝试 heal，并关闭 warning 输出')
+  .option('--no-require-review', '关闭 verdict 卡口，回到老行为（任何 verdict 都允许 heal）')
   .option('--json', '输出 JSON 格式')
   .action(async (caseName: string, options: Parameters<typeof healCommand>[1]) => {
   await healCommand(caseName, options);
 });
+
+// --- review ---
+// P1 范围：review 是真正的执行关卡。
+// - 默认入口（无子命令）：TTY → REPL 翻页裁决队列；非 TTY → 降级为 review list
+// - review set / list / show 子命令：脚本/CI 场景
+// - 配合 run 的 verdict 过滤（含 --include-* / --force / --no-require-review）形成闭环
+const reviewCmd = program
+  .command('review')
+  .description(
+    '管理用例的人工裁决（人工仲裁）。无子命令且 TTY 时进入 REPL 翻页裁决队列；非 TTY 时等价于 `review list`。',
+  )
+  .option(
+    '--cases <cases>',
+    '只过这 N 条（逗号分隔），与 generate 末尾挂点配合使用',
+    (v: string) => v.split(',').map((s) => s.trim()).filter(Boolean),
+  )
+  .option('--all', 'REPL 内不过滤 pending，也处理已 approved / needs-fix / rejected 等已裁决项')
+  .option(
+    '--preview-lines <n>',
+    'REPL 内每条用例显示的 spec.ts 最大行数（默认 30）',
+    (v) => {
+      const n = parseInt(v, 10);
+      if (!Number.isFinite(n) || n < 1) {
+        throw new Error(`--preview-lines 必须为 ≥ 1 的正整数，当前 "${v}"`);
+      }
+      return n;
+    },
+  )
+  .option('--json', '输出 JSON 格式')
+  .action(async (options: Parameters<typeof reviewInteractiveCommand>[1]) => {
+    const cwd = process.cwd();
+    if (canPromptInteractive()) {
+      await reviewInteractiveCommand(cwd, options);
+    } else {
+      // 非交互式终端：降级为 list，避免静默把全部 pending 默标 approved
+      await reviewListCommand({});
+    }
+  });
+
+reviewCmd
+  .command('set <name>')
+  .description('设置用例的裁决状态（--verdict 必填）')
+  .requiredOption(
+    '--verdict <verdict>',
+    `裁决结果：${REVIEW_VERDICTS.join('|')}`,
+    (v: string) => {
+      if (!(REVIEW_VERDICTS as readonly string[]).includes(v)) {
+        throw new Error(
+          `--verdict 必须是 ${REVIEW_VERDICTS.join('|')} 之一，当前 "${v}"`,
+        );
+      }
+      return v as ReviewVerdict;
+    },
+  )
+  .option('--reviewer <name>', '裁决人，默认从 $SPECMINT_REVIEWER / $USER / git config user.name 推断')
+  .option('--note <text>', '备注；传空字符串 --note "" 会清空备注')
+  .option('--json', '输出 JSON 格式')
+  .action(async (caseName: string, options: Parameters<typeof reviewSetCommand>[1]) => {
+    await reviewSetCommand(caseName, options);
+  });
+
+reviewCmd
+  .command('list')
+  .description('列出用例的裁决状态（默认只看 pending）')
+  .option('--all', '显示全部（关闭默认 --pending 过滤）')
+  .option('--verdict <verdict>', `按指定 verdict 过滤：${REVIEW_VERDICTS.join('|')}`, (v: string) => {
+    if (!(REVIEW_VERDICTS as readonly string[]).includes(v)) {
+      throw new Error(`--verdict 必须是 ${REVIEW_VERDICTS.join('|')} 之一，当前 "${v}"`);
+    }
+    return v as ReviewVerdict;
+  })
+  .option('--module <module>', '按模块中文名过滤（精确匹配 meta.module）')
+  .option('--group <group>', '按功能分组过滤（kebab-case，匹配 meta.group 或 name 前缀）')
+  .option('--json', '输出 JSON 格式')
+  .action(async (options: Parameters<typeof reviewListCommand>[0]) => {
+    await reviewListCommand(options);
+  });
+
+reviewCmd
+  .command('show <name>')
+  .description('查看用例的裁决状态（meta.review 概要 + case 描述）')
+  .option('--json', '输出 JSON 格式')
+  .action(async (caseName: string, options: Parameters<typeof reviewShowCommand>[1]) => {
+    await reviewShowCommand(caseName, options);
+  });
 
 // --- skill ---
 const skillCmd = program.command('skill').description('管理 agent skill 定义');

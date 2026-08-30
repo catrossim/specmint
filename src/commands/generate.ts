@@ -22,6 +22,7 @@ import { logger } from '../utils/logger.js';
 import { createAgentSession } from '../agent/session.js';
 import { createCaseTools, CASE_TOOL_NAMES } from '../agent/tools.js';
 import { buildGeneratePrompt } from '../agent/prompts.js';
+import { loadContract, renderContractSection } from '../contract.js';
 import { explorePage, type ExploreResult } from '../agent/explore.js';
 import { PRIORITIES, type Priority } from '../store/types.js';
 import { normalizeGroup, normalizeModule } from '../utils/normalize-meta.js';
@@ -643,6 +644,10 @@ async function runSingleCase(
           ? pickExample(description, exampleOverride)
           : pickExample(description, undefined);
 
+    // 前端元素契约：固定路径 .specmint/contract.json；缺失/空时静默降级为 null
+    const contract = loadContract(ctx.cwd);
+    const contractSection = contract ? renderContractSection(contract) : null;
+
     const prompt = buildGeneratePrompt({
       description,
       mode,
@@ -655,6 +660,7 @@ async function runSingleCase(
       cliModule: ctx.module ?? null,
       cliGroup: ctx.group ?? null,
       exampleContent,
+      contractSection,
     });
 
     const customTools = createCaseTools({

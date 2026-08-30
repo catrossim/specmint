@@ -2,26 +2,35 @@
  * rerun 子命令：重跑最近一次失败用例
  *
  * 行为：
- *   - 默认从最近一次 run（无论 status）提取失败用例名集合
+ *   - 默认从最近一次 run 提取失败用例名集合
  *   - --from <runId> 指定来源 run
- *   - 调用 runTests，pattern 拼接为 "<name>.spec.ts|<name2>.spec.ts"
- *     （playwright CLI 支持以空格分隔多个文件名）
+ *   - 把失败名转换为 Playwright pattern："<name>.spec.ts <name2>.spec.ts ..."
+ *
+ * P1 verdict 卡口（与 run 共用同一套过滤规则）：
+ *   - 预筛 failedNames，按 config.review.blockedOnRun 减去 --include-* 解禁项
+ *   - 全部被过滤时给出清晰提示，--include-* / --force / --no-require-review 可放宽
  */
 import { runTests } from '../runner/executor.js';
 import { loadConfig } from '../config.js';
 import { createStores } from '../store/index.js';
 import { ExitCode } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
+import type { ReviewVerdict } from '../store/types.js';
 
 export interface RerunOptions {
   from?: string;
   json?: boolean;
+  includePending?: boolean;
+  includeNeedsFix?: boolean;
+  includeRejected?: boolean;
+  force?: boolean;
+  noRequireReview?: boolean;
 }
 
 export async function rerunCommand(options: RerunOptions): Promise<void> {
   const cwd = process.cwd();
   const config = loadConfig(cwd);
-  const { historyStore, storage } = createStores(cwd);
+  const { historyStore, caseStore, storage } = createStores(cwd);
 
   const failedNames = options.from
     ? historyStore.getFailedTestNames(options.from)
@@ -38,11 +47,55 @@ export async function rerunCommand(options: RerunOptions): Promise<void> {
     return;
   }
 
+  // P1：verdict 卡口预筛
+  const reviewCfg = config.review;
+  const gateEnabled =
+    !!reviewCfg?.requireBeforeRun && !options.noRequireReview && !options.force;
+
+  let toRerun: string[] = failedNames;
+  let skipped: Array<{ name: string; verdict: ReviewVerdict }> = [];
+
+  if (gateEnabled) {
+    const blockedSet = new Set<ReviewVerdict>(reviewCfg!.blockedOnRun);
+    if (options.includePending) blockedSet.delete('pending');
+    if (options.includeNeedsFix) blockedSet.delete('needs-fix');
+    if (options.includeRejected) blockedSet.delete('rejected');
+
+    const allByName = new Map(caseStore.list({}).map((m) => [m.name, m]));
+    toRerun = [];
+    skipped = [];
+    for (const name of failedNames) {
+      const m = allByName.get(name);
+      const verdict = (m?.reviewVerdict ?? 'pending') as ReviewVerdict;
+      if (blockedSet.has(verdict)) skipped.push({ name, verdict });
+      else toRerun.push(name);
+    }
+
+    if (toRerun.length === 0) {
+      const verdicts = Array.from(new Set(skipped.map((s) => s.verdict)));
+      logger.warn(
+        `[review gate] ${failedNames.length} 个失败用例全部被 verdict 过滤跳过（verdicts: ${verdicts.join(', ')}）`,
+      );
+      logger.warn(`  用 --include-pending / --include-needs-fix / --include-rejected 放宽`);
+      process.exitCode = ExitCode.NOT_FOUND;
+      return;
+    }
+    if (skipped.length > 0 && !options.json) {
+      const preview = skipped
+        .slice(0, 5)
+        .map((s) => `${s.name}=${s.verdict}`)
+        .join(', ');
+      logger.warn(
+        `[review gate] 跳过 ${skipped.length} 个失败用例（verdict 被过滤）：${preview}${skipped.length > 5 ? ' ...' : ''}`,
+      );
+    }
+  }
+
   // playwright CLI pattern：空格分隔多个 spec 文件
-  const pattern = failedNames.map((n) => `${n}.spec.ts`).join(' ');
+  const pattern = toRerun.map((n) => `${n}.spec.ts`).join(' ');
 
   if (!options.json) {
-    logger.info(`重跑 ${failedNames.length} 个用例: ${failedNames.join(', ')}`);
+    logger.info(`重跑 ${toRerun.length} 个用例: ${toRerun.join(', ')}`);
   }
 
   const result = await runTests({
@@ -59,7 +112,12 @@ export async function rerunCommand(options: RerunOptions): Promise<void> {
   if (options.json) {
     process.stdout.write(
       JSON.stringify(
-        { ok: result.exitCode === 0, reran: failedNames, ...result },
+        {
+          ok: result.exitCode === 0,
+          reran: toRerun,
+          skipped: skipped.map((s) => `${s.name}=${s.verdict}`),
+          ...result,
+        },
         null,
         2,
       ) + '\n',

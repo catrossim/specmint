@@ -4,8 +4,8 @@ specmint 项目的所有重要变更都会记录在这里。版本号遵循 [Sem
 
 ## 版本说明
 
-- **当前发布版本**：`0.1.0`（首次对外发布）
-- 内部迭代以 `v2` / `v2.1` / `v2.2` / `v2.3` 标识，本文件作为对外权威变更日志。
+- **当前发布版本**：`0.3.0`（内部 v2.5 增量，详见 [0.3.0] 段）
+- 内部迭代以 `v2` / `v2.1` / `v2.2` / `v2.3` / `v2.4` / `v2.5` 标识，本文件作为对外权威变更日志。
 - 自 `0.1.0` 起，每个 npm release 都会在此新增一段 `## [x.y.z] - YYYY-MM-DD`。
 
 ---
@@ -199,3 +199,125 @@ npx specmint run --config ./my-playwright.config.ts
 # 强制使用系统 Chrome（跳过 auto 检测）
 # 在 config.json 里设 runner.browserChannel: "chrome"
 ```
+
+---
+
+## [0.3.0] - 2026-08-30
+
+review 元数据升级为**真正的执行关卡**（内部 v2.5 增量）。本次发布把 `meta.review.verdict` 从静态标签升级为运行时过滤维度：`specmint run` 默认仅跑 `verdict=approved` 的用例；`specmint heal` 默认仅修 `verdict=needs-fix` 的用例；CI 流水线能精准避免「未裁决 / 需修复 / 已废弃」三类用例污染产物。新增 REPL 翻页裁决器，把人工仲裁从被动填字段变为主动流水线一环。
+
+### 新增能力
+
+- **`review` REPL 翻页裁决队列**（v0.3 默认入口）：`specmint review`（无子命令）首次进 TTY → 翻页列表 + 单键裁决；非 TTY 降级为 `review list`。支持 `[a]pproved / [n]eeds-fix / [r]ejected / [s]kipped / [q]uit` 单键操作
+- **`review set <case>` 子命令**：脚本/CI 场景，按 `--verdict --reviewer --reason` 直接更新 meta.review，不进 REPL
+- **`review list` 子命令**：列所有用例的裁决状态，支持 `--verdict needs-fix` 过滤、JSON 输出
+- **`review show <case>` 子命令**：查看单个用例的裁决状态 + case 描述 + 最近修改时间
+- **`generate` 末尾挂点**：TTY 模式下 generate 完成后提示"新用例待裁决，是否现在打开 review REPL"；非 TTY / 配置 `review.pendingOnGenerate=false` 时跳过
+- **`run` verdict 卡口**：`specmint run` 默认仅跑 `verdict=approved` 的用例；用 `--include-pending` / `--include-needs-fix` / `--include-rejected` 放宽；`--force` 完全关闭卡口；`--no-require-review` 等价于 `requireBeforeRun=false`
+- **`heal` verdict 卡口**：`specmint heal` 默认仅修 `verdict=needs-fix` 的用例；用 `--include-pending` / `--include-approved` / `--include-rejected` 放宽；`--force` 完全关闭卡口；`--no-require-review` 等价于 `requireBeforeHeal=false`
+- **`rerun` verdict 卡口**：与 `run` 共用同一套过滤语义
+- **`list --verdict` 过滤**：按 verdict 过滤用例
+
+### 配置增量
+
+`.specmint/config.json`：
+
+```jsonc
+{
+  "review": {
+    "requireBeforeRun": true,            // 是否对 run / rerun 启用 verdict 卡口
+    "requireBeforeHeal": true,           // 是否对 heal 启用 verdict 卡口
+    "pendingOnGenerate": true,           // generate 后是否提示进入 review REPL
+    "reviewerSource": "git-user",        // 默认裁决人来源：git-user / env / none
+    "blockedOnRun":  ["pending", "needs-fix", "rejected"],     // run 默认排除
+    "blockedOnHeal": ["pending", "approved", "rejected", "skipped"]  // heal 默认排除
+  }
+}
+```
+
+完全关闭 review 卡口（回到 v0.2.0 老行为）：
+
+```jsonc
+{
+  "review": {
+    "requireBeforeRun": false,
+    "requireBeforeHeal": false
+  }
+}
+```
+
+或在运行时传 `--no-require-review`。
+
+### CLI 增量
+
+```bash
+# 进入 REPL 翻页裁决
+npx specmint review
+
+# 脚本/CI：单条裁决
+npx specmint review set auth/login-success --verdict approved --reviewer alice
+npx specmint review set auth/login-failure --verdict needs-fix --reason "selector 飘"
+
+# 查看状态
+npx specmint review show auth/login-success
+npx specmint review list --verdict needs-fix
+
+# run：默认仅 approved；放宽
+npx specmint run                                # 默认仅 verdict=approved
+npx specmint run --include-pending              # 加上 pending
+npx specmint run --include-needs-fix --force    # 全部都跑（不推荐在 CI 用）
+npx specmint run --no-require-review            # 完全关闭卡口
+
+# heal：默认仅 needs-fix
+npx specmint heal auth/login-failure             # 仅 verdict=needs-fix
+npx specmint heal auth/login-failure --include-rejected  # 也尝试修 rejected
+npx specmint heal auth/login-failure --force    # 完全关闭卡口
+
+# list 按 verdict 过滤
+npx specmint list --verdict needs-fix
+```
+
+### 升级步骤（v0.2.0 → v0.3.0）
+
+**默认行为有变**（这是 minor 但行为相关的变更，所以 bump 到 0.3.0 而非 0.2.x）：
+
+1. **CI 流水线可能突然少跑用例**：v0.2.0 默认跑全部 enabled 用例，v0.3.0 默认仅跑 verdict=approved。首次升级前请先：
+   - 用 `npx specmint review list` 看看当前用例的 verdict 状态
+   - 用 `npx specmint review set <case> --verdict approved` 把想保留 CI 跑的所有用例标 approved
+   - 或者临时加 `--no-require-review` 一次过渡
+2. **想保留 v0.2.0 老行为**：在 `.specmint/config.json` 设 `review.requireBeforeRun = false` / `review.requireBeforeHeal = false`
+3. **想用 REPL 流程**：从 `npx specmint review` 开始（首次进 TTY）
+
+向后兼容：
+
+- 旧 `.specmint/` 项目无 verdict 的用例视作 `verdict=pending`，会被 run 默认排除（这正是 v0.3.0 的目的：强制人工看完一遍再让 CI 跑）
+- 老的 `specmint run` / `specmint heal` 完整保留，加 `--no-require-review` / `--force` 即等价老行为
+
+### 不在本次范围
+
+- review show 加 diff 视图
+- REPL 批量裁决
+- heal 给出 verdict 改进建议
+- verdict 时间线历史
+- 留给 v0.4.0+
+
+---
+
+## [0.2.0] - 2026-08-29
+
+前端元素契约特性上线（内部 v2.4 增量）。新增 `.specmint/contract.json` 契约文件机制：specmint 在 generate 阶段读取契约并注入 prompt，让 LLM 按约定生成 Playwright 定位器，避免命名风格漂移。
+
+### 新增能力
+
+- **契约文件加载**：固定路径 `.specmint/contract.json`（与 `config.json` 同策略，"路径不可配置"）。契约缺失/为空时静默降级为 null，行为与现状字节级一致
+- **契约 prompt 注入**：`buildGeneratePrompt` 在定位器策略段后条件插入 `<contract>` XML 段，模块保持单向依赖（`contract.ts` 是叶子模块）
+- **宽容降级 + fail-fast**：JSON.parse 失败 / version 不匹配 / elements 非数组 → `CliError(IO_ERROR)`，其余一律宽容
+- **完整指南**：[docs/element-contract.md](./docs/element-contract.md) 含 JSON 结构、4 个场景示例、AI 协同工作流、10 条 FAQ
+
+### 配置增量
+
+无。契约文件结构与位置均固定，不入 `.specmint/config.json`。
+
+### 升级步骤（v0.1.0 → v0.2.0）
+
+无需操作，向后兼容。如需使用契约特性，按 `docs/element-contract.md` 第 5 步创建 `.specmint/contract.json` 即可。

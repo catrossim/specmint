@@ -34,6 +34,7 @@ import type {
   CaseSummary,
   CaseWithCode,
   Priority,
+  ReviewState,
   SelectorPolicy,
 } from './types.js';
 
@@ -269,6 +270,7 @@ export class CaseStore {
         specPath: pathRelative(this.cwd, specFile),
         metaPath: pathRelative(this.cwd, metaFile),
         pageObjectFile: pomRelative,
+        reviewVerdict: meta.review?.verdict,
       });
     }
 
@@ -383,6 +385,8 @@ export class CaseStore {
         file: input.pageObject?.file ?? null,
       },
       stats: emptyStats(),
+      // 默认新生成用例为待裁决；调用方可在 review.reopen() 或后续 updateReview() 中改写。
+      review: { verdict: 'pending' as const },
     };
 
     const specFile = this.specPath(input.name);
@@ -392,7 +396,7 @@ export class CaseStore {
 
     // 兜底：spec.ts 落盘前对 POM import 路径做规范化（见 rewriteSpecImports 注释）
     let pomAbsoluteFile: string | null = null;
-    if (input.pageObject?.enabled && input.pageObject.code && input.pageObject.file) {
+    if (input.pageObject?.enabled && input.pageObject?.code && input.pageObject.file) {
       pomAbsoluteFile = resolve(this.casesDir, input.pageObject.file);
       const rewriteResult = rewriteSpecImports(
         normalizedSpecCode,
@@ -484,6 +488,43 @@ export class CaseStore {
   }
 
   /**
+   * 更新用例的 review 状态。
+   * - 用例不存在抛 NOT_FOUND
+   * - 不变更 name / createdAt / stats
+   * - reviewedAt 始终刷为当前时间
+   */
+  updateReview(name: string, patch: ReviewState): CaseMeta {
+    const current = this.get(name);
+    if (!current) {
+      throw new CliError({
+        code: ExitCode.NOT_FOUND,
+        message: `用例 ${name} 不存在`,
+      });
+    }
+
+    const next: CaseMeta = {
+      ...current,
+      review: {
+        verdict: patch.verdict,
+        reviewer: patch.reviewer,
+        reviewedAt: patch.reviewedAt ?? new Date().toISOString(),
+        note: patch.note,
+      },
+      updatedAt: new Date().toISOString(),
+    };
+
+    try {
+      writeFileSync(this.metaPath(name), JSON.stringify(next, null, 2) + '\n', 'utf-8');
+    } catch (err) {
+      throw new CliError({
+        code: ExitCode.IO_ERROR,
+        message: `更新用例 ${name} 的 review 状态失败：${(err as Error).message}`,
+      });
+    }
+    return next;
+  }
+
+  /**
    * 覆盖 spec.ts 与 POM（用于 heal/regenerate 场景）
    */
   updateCode(
@@ -505,8 +546,8 @@ export class CaseStore {
       const targetPomFile: string | null = pageObject
         ? resolve(this.casesDir, pageObject.file)
         : meta.pageObject.file
-        ? resolve(this.casesDir, meta.pageObject.file)
-        : null;
+          ? resolve(this.casesDir, meta.pageObject.file)
+          : null;
       if (targetPomFile) {
         const rewriteResult = rewriteSpecImports(
           normalizedSpecCode,

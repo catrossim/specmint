@@ -17,12 +17,58 @@
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import type { ReviewVerdict } from './store/types.js';
 import { CliError, ExitCode } from './utils/errors.js';
 import { logger } from './utils/logger.js';
 
 export type AgentDelegate = 'sdk' | 'cli';
 export type ExploreWaitUntil = 'load' | 'domcontentloaded' | 'networkidle';
 export type GenerationStyle = 'page-object-optional' | 'page-object-required' | 'inline-only';
+/** `review` 段裁决人字段的回填来源：CLI 显式 > env > git config > '$USER' */
+export type ReviewerSource = 'cli' | 'env' | 'git-user';
+
+export interface ReviewConfig {
+  /**
+   * `run --all` 默认仅跑 verdict=approved；关掉此开关可回到老行为（跑全部 enabled 用例）。
+   * 配合 `blockedOnRun` 可精细控制哪些 verdict 被默认排除。
+   */
+  requireBeforeRun: boolean;
+  /**
+   * `generate` 落盘时是否默认写入 review.verdict='pending'。
+   * 默认 true：所有新用例必须经过人工裁决才能进入 run。
+   */
+  pendingOnGenerate: boolean;
+  /**
+   * 裁决人字段的自动回填来源优先级。
+   * - `cli`：只用 CLI --reviewer；未传则用 'unknown'（最严格）
+   * - `env`：CLI > $SPECMINT_REVIEWER > $USER > git config user.name
+   * - `git-user`（默认）：CLI > $SPECMINT_REVIEWER > $USER > `git config user.name`
+   */
+  reviewerSource: ReviewerSource;
+  /**
+   * 被默认排除的 verdict 集合（run / rerun / heal 默认行为）。
+   * 默认 ['pending','needs-fix','rejected']，即仅 verdict='approved' 时自动跑。
+   * - 'pending' 通常是 AI 生成后没看过的，跳过最安全
+   * - 'needs-fix' 是明确标了要改的，跑多半挂
+   * - 'rejected' 是废弃的，CI 静默跳过
+   * 如想允许跑某类 verdict，配 `--include-pending/--include-needs-fix/--include-rejected`，
+   * 或在 config 中清空此数组。
+   */
+  blockedOnRun: ReviewVerdict[];
+  /**
+   * P1：heal 是否启用 verdict 卡口。默认仅 `verdict=needs-fix` 的用例可被 heal。
+   * 关掉此开关可回到老行为（任何 verdict 都尝试 heal）。
+   * 配合 `blockedOnHeal` 可精细控制哪些 verdict 被默认排除。
+   */
+  requireBeforeHeal: boolean;
+  /**
+   * P1：被默认排除的 verdict 集合（heal 命令默认行为）。
+   * 默认 ['pending','approved','rejected','skipped']，即仅 verdict='needs-fix' 可被 heal。
+   * 如想允许 heal 其它 verdict，配 `--include-pending/--include-approved/--include-rejected`，
+   * 或在 config 中清空此数组。
+   */
+  blockedOnHeal: ReviewVerdict[];
+}
 
 export interface AutoTestConfig {
   version: string;
@@ -104,6 +150,13 @@ export interface AutoTestConfig {
     cookies?: AuthCookieSpec[];
     storageState?: string;
   };
+  /**
+   * P1：人工裁决（人工仲裁）配置。
+   * - `requireBeforeRun=true`：run --all 默认仅跑 verdict=approved
+   * - `blockedOnRun`：细粒度控制哪些 verdict 被默认排除
+   * - 与 run 命令的 --include-* / --force / --no-require-review 标志叠加生效
+   */
+  review?: ReviewConfig;
 }
 
 /**
@@ -117,7 +170,7 @@ export interface AuthCookieSpec {
   path?: string;
   secure?: boolean;
   httpOnly?: boolean;
-  sameSite?: 'Strict' | 'Lax' | 'None';
+  sameSite: 'Strict' | 'Lax' | 'None';
   expires?: number;
 }
 
@@ -158,6 +211,16 @@ export const DEFAULT_CONFIG: AutoTestConfig = {
     timeoutMs: 30_000,
     browserChannel: 'auto',
   },
+  review: {
+    requireBeforeRun: true,
+    pendingOnGenerate: true,
+    reviewerSource: 'git-user',
+    // 默认仅 verdict='approved' 自动跑；其余用 CLI 标志开启
+    blockedOnRun: ['pending', 'needs-fix', 'rejected'],
+    // P1：默认仅 verdict='needs-fix' 可被 heal；其余用 --include-* / --force 放开
+    requireBeforeHeal: true,
+    blockedOnHeal: ['pending', 'approved', 'rejected', 'skipped'],
+  },
 };
 
 /**
@@ -175,6 +238,12 @@ export const STORAGE_LAYOUT = {
   playwrightConfig: '.specmint/playwright.config.ts',
   authDir: '.specmint/auth',
   authStorage: '.specmint/auth/storage',
+  /**
+   * 前端元素契约文件。前端/AI 代码生成方按约定将带 data-testid 的元素清单
+   * 落盘到该路径；specmint 在 generate 阶段读取并注入 prompt。
+   * 缺失/为空/损坏时静默降级（null + debug 日志），与现状字节级一致。
+   */
+  contractFile: '.specmint/contract.json',
 } as const;
 
 export interface LoadConfigResult {
@@ -228,6 +297,10 @@ function mergeConfig(base: AutoTestConfig, override: Record<string, unknown>): A
   const overrideExplore = override.explore as Record<string, unknown> | undefined;
   const baseExploreCache = (base.explore.cache ?? {}) as Record<string, unknown>;
   const overrideExploreCache = (overrideExplore?.cache as Record<string, unknown> | undefined) ?? {};
+  // 用户可在 config 里写 `review: null` / `review: false` 显式禁用 review 段；
+  // cast 拓宽类型让后面的 null/false 比较有意义。
+  const overrideReview = override.review as Partial<ReviewConfig> | null | false | undefined;
+  const baseReview = base.review ?? DEFAULT_CONFIG.review!;
   return {
     version: '1',
     agent: { ...base.agent, ...((override.agent as object | undefined) ?? {}) },
@@ -247,6 +320,13 @@ function mergeConfig(base: AutoTestConfig, override: Record<string, unknown>): A
     },
     runner: { ...base.runner, ...((override.runner as object | undefined) ?? {}) },
     auth: overrideAuth ? mergeAuth(base.auth, overrideAuth) : base.auth,
+    // review 段：浅合并 + 子段替换；用户禁用 review 时可在 config 写 `review: null`/`false`
+    review: overrideReview === null || overrideReview === false
+      ? undefined
+      : {
+          ...baseReview,
+          ...(overrideReview ?? {}),
+        },
     // 已废弃字段（storage / runner.configPath）会被静默忽略，不抛错（向前兼容）
   };
 }

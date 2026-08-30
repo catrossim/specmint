@@ -1,6 +1,6 @@
-# specmint 端到端验证手册（v2.3+）
+# specmint 端到端验证手册（v2.5+）
 
-> 适用版本：`specmint@0.1.0`（含 v2.3+ 全部能力）。覆盖从零接入到 CI 跑测的完整 6 步流程。
+> 适用版本：`specmint@0.3.0`（含 v2.3+ 全部能力 + v2.4 契约增量 + v2.5 review 执行关卡）。覆盖从零接入到 CI 跑测的完整 6 步流程。
 
 ## Step 1：初始化
 
@@ -50,7 +50,32 @@ specmint generate "完整购买流程" --url https://staging.example.com --prior
 
 v2.3+ 还会把 `(URL, storageState) → a11y 快照` 落盘到 `.specmint/cache/explore/`，TTL 默认 10 分钟；同 URL 反复生成时直接复用，强制刷新用 `--no-explore-cache`。
 
-## Step 4：跑测（公开页场景）
+## Step 4：review 裁决（v0.3+，可选但推荐）
+
+> **v0.3.0 新增**：run / heal 现在受 verdict 卡口过滤。首次接入 review 流程可跳过本步，直接在 `.specmint/config.json` 设 `"review": { "requireBeforeRun": false, "requireBeforeHeal": false }` 回到 v0.2.0 老行为。
+
+```bash
+# 1. 进入 REPL 翻页裁决（首次进 TTY）
+npx specmint review
+```
+
+按 `[a/p/n/r/s/q]` 单键翻页裁决全部用例。verdict 默认 `pending`，所有 v0.3.0 的 `run` 默认跳过 pending 用例。
+
+```bash
+# 2. 脚本/CI 场景：单条裁决
+npx specmint review set login-success --verdict approved --reviewer alice
+npx specmint review set login-failure --verdict needs-fix --reason "selector 飘"
+
+# 3. 查看全部 needs-fix 用例
+npx specmint review list --verdict needs-fix
+
+# 4. 查看单条详情
+npx specmint review show login-success
+```
+
+跑 REPL 时敲 `q` 退出。下一步 `specmint run` 默认仅跑 approved 用例。
+
+## Step 5：跑测（公开页场景）
 
 ```bash
 npx specmint run --no-auth
@@ -58,7 +83,7 @@ npx specmint run --no-auth
 
 `--no-auth` 跳过 storageState（适合不需登录的页面）。
 
-## Step 5：登录用例（auth 子系统）
+## Step 6：登录用例（auth 子系统）
 
 需要登录的页面走 auth 子系统：
 

@@ -68,6 +68,21 @@ export interface CaseStats {
   averageDurationMs: number;
 }
 
+/** 人工裁决结果枚举（缺失视为 'pending'）。 */
+export const REVIEW_VERDICTS = ['pending', 'approved', 'needs-fix', 'rejected', 'skipped'] as const;
+export type ReviewVerdict = (typeof REVIEW_VERDICTS)[number];
+
+/** 人工裁决状态。 */
+export interface ReviewState {
+  verdict: ReviewVerdict;
+  /** 裁决人 / 渠道标识；缺失时回落到 defaultReviewer() */
+  reviewer?: string;
+  /** ISO 8601 时间戳 */
+  reviewedAt?: string;
+  /** 备注；`""` 表示显式清空，`undefined` 表示未设置 */
+  note?: string;
+}
+
 export interface PageObjectRef {
   enabled: boolean;
   /** 相对 casesDir 的 POM 文件路径，如 "./pages/login.page.ts" */
@@ -103,6 +118,11 @@ export interface CaseMeta {
   generation: CaseGeneration;
   pageObject: PageObjectRef;
   stats: CaseStats;
+  /**
+   * 人工裁决（人工仲裁）状态。缺失或 verdict 未设视为 'pending'。
+   * 仅作为元信息持久化；不参与 run / heal 的执行语义（待 P1 接入）。
+   */
+  review?: ReviewState;
 }
 
 /** 列表展示用的精简视图（不含 stats 全量） */
@@ -122,6 +142,11 @@ export interface CaseSummary {
   specPath: string;
   metaPath: string;
   pageObjectFile: string | null;
+  /**
+   * 人工裁决结果。缺失或 meta.review.verdict 未设时视为 'pending'。
+   * 供 `specmint review list --pending` 与 `list` 的 REVIEW 列使用。
+   */
+  reviewVerdict?: ReviewVerdict;
 }
 
 /** 含代码的完整用例视图（供 agent 生成/修复时使用） */

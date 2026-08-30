@@ -244,6 +244,12 @@ export interface PromptInput {
   cliModule?: string | null;
   /** CLI --group 显式传值；非空时 prompt 强约束 PI 原样使用 */
   cliGroup?: string | null;
+  /**
+   * 可选：前端元素契约（已渲染好的 XML 段）。
+   * null/undefined = 无契约，跳过注入；非空时插在定位器策略段之后、pageObject 段之前。
+   * 调用方负责契约加载与渲染（src/contract.ts），prompts.ts 不反向依赖契约模块。
+   */
+  contractSection?: string | null;
 }
 
 /**
@@ -299,6 +305,11 @@ export function buildGeneratePrompt(input: PromptInput): string {
   parts.push(`- 优先: ${input.selectorPolicy.prefer.join(', ')}`);
   parts.push(`- 避免: ${input.selectorPolicy.avoid.join(', ')}`);
   parts.push('');
+
+  if (input.contractSection) {
+    parts.push(input.contractSection);
+    parts.push('');
+  }
 
   if (input.pageObjectEnabled) {
     parts.push('本任务需要同步生成 Page Object 文件（--page-object 模式）。');
