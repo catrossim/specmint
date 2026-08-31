@@ -134,6 +134,11 @@ export interface GenerateOptions {
    * 加载已完成项并跳过，仅跑剩余未完成的 description。
    */
   resumeFile?: string;
+  /**
+   * 批量输入文件路径（来自 CLI `--batch-file <path>`）。
+   * 优先级高于 <description> 与 stdin。按行切分，跳过空行与 `#` 注释。
+   */
+  batchFile?: string;
 }
 
 export interface GenerateSavedCase {
@@ -187,11 +192,17 @@ export interface BatchContext {
 }
 
 export async function generateCommand(
-  description: string,
+  rawDescription: string,
   options: GenerateOptions,
 ): Promise<GenerateResult | GenerateBatchResult> {
-  if (!description || description.trim().length === 0) {
-    throw new CliError({ code: ExitCode.USAGE_ERROR, message: '缺少需求描述' });
+  // 解析批量输入：--batch-file > stdin 多行 > <description>
+  const descriptionsRaw = await resolveInputDescriptions(rawDescription, options.batchFile);
+  if (descriptionsRaw.length === 0) {
+    throw new CliError({
+      code: ExitCode.USAGE_ERROR,
+      message: '缺少需求描述：必须传 <description>、--batch-file、或通过 stdin 管道传入',
+      hint: '示例：specmint generate "用例描述" --priority P0',
+    });
   }
 
   // 任务 2：--priority 是必填项，避免 LLM 自由发挥污染冒烟集
@@ -234,8 +245,10 @@ export async function generateCommand(
   const config = loadConfig(cwd);
   const { caseStore } = createStores(cwd);
 
-  // 拆分多描述。逗号 + trim + 去空 + 去重（保持首次出现的顺序）。
-  const descriptions = parseDescriptions(description);
+  // 合并多来源：batch-file / stdin 已经是数组；单 description 用 comma-split 兼容旧用法。
+  // 多来源时不再合并（每行就是 1 条用例），避免嵌套逗号被误切。
+  const descriptions =
+    descriptionsRaw.length === 1 ? parseDescriptions(descriptionsRaw[0]!) : descriptionsRaw;
   const concurrency = Math.max(1, options.concurrency ?? 2);
   const mode: GenerateResult['mode'] = options.url
     ? 'explore-assisted'
@@ -443,6 +456,52 @@ export function parseClassifyOutput(content: string): ClassifyOutput | null {
     }
   }
   return null;
+}
+
+/**
+ * 解析批量 description 输入：--batch-file > <description> > stdin 多行
+ * - --batch-file：按行切分，跳过 # 注释与空行
+ * - <description>：原样返回（保留逗号/换行整段，由 parseDescriptions 再做 comma-split）
+ * - stdin：当 TTY=否 + rawDescription 为空 + batchFile 也为空时，从 stdin 读
+ *
+ * 返回数组（每项 = 1 条用例的原始 description 段）。
+ */
+export async function resolveInputDescriptions(
+  rawDescription: string,
+  batchFile: string | undefined,
+): Promise<string[]> {
+  if (batchFile) {
+    const { readFile } = await import('node:fs/promises');
+    const raw = await readFile(batchFile, 'utf8');
+    const lines = raw
+      .split(/\r?\n/)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0 && !s.startsWith('#'));
+    if (lines.length === 0) {
+      throw new CliError({
+        code: ExitCode.USAGE_ERROR,
+        message: `--batch-file "${batchFile}" 中没有有效描述（非空、非 # 注释）`,
+      });
+    }
+    return lines;
+  }
+  if (rawDescription && rawDescription.trim().length > 0) {
+    return [rawDescription];
+  }
+  // stdin 仅在非 TTY 时读，避免误吞用户交互输入
+  if (!process.stdin.isTTY) {
+    const chunks: Buffer[] = [];
+    for await (const chunk of process.stdin) {
+      chunks.push(chunk as Buffer);
+    }
+    const raw = Buffer.concat(chunks).toString('utf8');
+    const lines = raw
+      .split(/\r?\n/)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0 && !s.startsWith('#'));
+    if (lines.length > 0) return lines;
+  }
+  return [];
 }
 
 /**

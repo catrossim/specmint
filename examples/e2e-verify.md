@@ -1,6 +1,6 @@
-# specmint 端到端验证手册（v2.5+）
+# specmint 端到端验证手册
 
-> 适用版本：`specmint@0.3.0`（含 v2.3+ 全部能力 + v2.4 契约增量 + v2.5 review 执行关卡）。覆盖从零接入到 CI 跑测的完整 6 步流程。
+> 适用版本：`specmint@0.3.0`（首个公开发版，含 review 执行关卡 + 自带 pi-coding-agent / playwright）。覆盖从零接入到 CI 跑测的完整 6 步流程。
 
 ## Step 1：初始化
 
@@ -8,7 +8,7 @@
 npx specmint init
 ```
 
-**输出**（v2.3+ 不再生成任何项目根文件）：
+**输出**（v0.2.0+ 不再生成任何项目根文件）：
 
 ```
 ✓ 已创建 .specmint/
@@ -22,7 +22,7 @@ npx specmint init
 ✓ 已追加 .gitignore 条目（5 行）
 ```
 
-> **v2.3 变化**：init 不再生成 `.specmint/playwright.config.ts` 与 `.specmint/specmint-reporter.ts`——这两个文件完全在包内（`dist/runner/`），executor 通过 `import.meta.url` 定位。深度自定义可用 `specmint run --config <path>` 显式覆盖。
+> **v0.2.0 变化**：init 不再生成 `.specmint/playwright.config.ts` 与 `.specmint/specmint-reporter.ts`——这两个文件完全在包内（`dist/runner/`），executor 通过 `import.meta.url` 定位。深度自定义可用 `specmint run --config <path>` 显式覆盖。
 
 ## Step 2：选择 LLM
 
@@ -48,7 +48,32 @@ npx specmint generate "登录成功" --priority P0
 specmint generate "完整购买流程" --url https://staging.example.com --priority P1
 ```
 
-v2.3+ 还会把 `(URL, storageState) → a11y 快照` 落盘到 `.specmint/cache/explore/`，TTL 默认 10 分钟；同 URL 反复生成时直接复用，强制刷新用 `--no-explore-cache`。
+v0.2.0+ 还会把 `(URL, storageState) → a11y 快照` 落盘到 `.specmint/cache/explore/`，TTL 默认 10 分钟；同 URL 反复生成时直接复用，强制刷新用 `--no-explore-cache`。
+
+### 批量生成（推荐用法）
+
+`generate` 单次调用 = **1 条用例** = **1 个 `.spec.ts` 文件**。批量场景用以下三种方式：
+
+```bash
+# 方式 A：逗号糖（兼容旧版，但描述里如果有逗号会被误切，慎用）
+npx specmint generate "管理员登录,管理员看到待办,管理员审批通过" --priority P0
+
+# 方式 B：--batch-file（推荐，每行一条，# 开头为注释，跳过空行）
+cat > ./specs.txt <<'EOF'
+# 冒烟集
+管理员登录后台
+管理员看到待办列表
+管理员审批通过一条待办
+EOF
+npx specmint generate --batch-file ./specs.txt --priority P0 --concurrency 3
+
+# 方式 C：stdin 管道（适合 CI / Makefile）
+printf "用例1\n用例2\n用例3" | npx specmint generate --priority P0 --concurrency 3
+```
+
+> **不要**在描述里写"限制 6 条用例"——specmint 单次只生成 1 条用例；想要 N 条用例 = N 次独立调用 / N 行 batch-file / N 行 stdin。
+>
+> 并发与 checkpoint：`--concurrency N` 控制并发（默认 2），`--checkpoint <dir>` 每完成一条增量写 state（崩溃/Ctrl-C 可 `--resume`），失败自动隔离不影响其他用例。
 
 ## Step 4：review 裁决（v0.3+，可选但推荐）
 
@@ -178,7 +203,7 @@ npx specmint run --auth admin
 - 注入 storageState = `.specmint/auth/storage/admin.json`
 - 跳过 setup project（已 refresh 过）
 
-> v2.3+ 仅在检测到 `*.setup.ts` 时挂载 auth-setup project，根治"占位 setup 失败连坐真实用例 → did not run"问题。
+> v0.2.0+ 仅在检测到 `*.setup.ts` 时挂载 auth-setup project，根治"占位 setup 失败连坐真实用例 → did not run"问题。
 
 ## CI 集成
 
@@ -197,10 +222,10 @@ npx specmint run --auth admin
 
 **Q：项目根被污染了怎么办？**
 
-A：v2 起所有产物都在 `.specmint/`，**项目根零污染**。如果你的项目根仍有遗留：
+A：v0.2.0 起所有产物都在 `.specmint/`，**项目根零污染**。如果你的项目根仍有遗留：
 
 - 老的 `specmint.config.json` → 删除
-- 老的 `playwright.config.ts` → 删除（v2.3+ 包内自带）
+- 老的 `playwright.config.ts` → 删除（v0.2.0+ 包内自带）
 - 老的 `tests/` / `reports/` / `test-results/` → 删除
 
 删除后跑一次 `npx specmint init`（幂等；已有 `.specmint/` 不会重建），再用 `specmint run` 验证。

@@ -347,6 +347,16 @@ export function buildGeneratePrompt(input: PromptInput): string {
   parts.push(input.description.trim());
   parts.push('');
 
+  // 【硬约束】本次 generate 调用只生成 1 条用例（v0.4+ 起）。
+  // 即使用户描述里出现"6 条"、"3 个场景"之类的字面数字，也只产出 1 条
+  // 最贴合"用户需求"段那条描述的用例；其余场景应在 summary 里提示用户
+  // 改用逗号分隔 / --batch-file / stdin 多行 批量调用。
+  parts.push('【硬约束】本次调用只生成 1 条用例（1 次 save_case 工具调用）。');
+  parts.push(
+    '若用户需求段提到数字（如"6 条"、"3 个场景"），只产出 1 条最具代表性的用例；剩余场景建议用户用逗号分隔 / --batch-file / stdin 多行 多次调用。',
+  );
+  parts.push('');
+
   parts.push('执行步骤：');
   parts.push('1. 阅读风格约束、定位器策略与上下文（探索模式）');
   parts.push(
