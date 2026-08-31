@@ -41,6 +41,10 @@ export interface RunOptions {
   retries?: string;
   grep?: string;
   priority?: Priority[];
+  /** CLI --module <m>：按用例 meta.module 精确过滤 */
+  module?: string;
+  /** CLI --group <g>：按用例 meta.group（或 name 前缀）精确过滤 */
+  group?: string;
   header?: string[];
   storageState?: string;
   /** CLI --auth <name> */
@@ -120,10 +124,20 @@ export async function runCommand(
 
   let resolvedPattern: string | undefined;
   if (pattern) {
-    if (pattern.includes('/') || pattern.endsWith('.ts')) {
+    if (pattern.endsWith('.ts')) {
+      // 单文件路径（含 .spec.ts / 其他 .ts）：直接交给 playwright；
+      // verdict 卡口由下方 "单文件模式" 段（resolvedPattern + !grep）按 specPath 查 verdict。
       resolvedPattern = pattern;
     } else {
-      const rawMatches = caseStore.list({ pattern });
+      // 任意非 .ts 结尾的 pattern（含 / 的目录/路径前缀或纯名前缀）：
+      // 统一走 caseStore.list 派生，与纯名前缀一致地过 verdict gate（list 同时应用 module/group 过滤）。
+      // 修复点：含 / 的目录路径（如 "classes/"）原先被 fast-path 直接当作文件路径，
+      // 导致下方 "单文件模式" gate 找不到 matchCandidate 而被静默跳过，verdict 卡口失效。
+      const rawMatches = caseStore.list({
+        pattern,
+        ...(options.module ? { module: options.module } : {}),
+        ...(options.group ? { group: options.group } : {}),
+      });
       const matches = gateEnabled
         ? (() => {
             const { kept } = applyVerdictGate(
@@ -146,10 +160,14 @@ export async function runCommand(
           logger.warn(
             `  用 --include-pending / --include-needs-fix / --include-rejected 放宽过滤，或 --force 关闭卡口`,
           );
-          process.exitCode = ExitCode.NOT_FOUND;
-          return;
+        } else {
+          const extra: string[] = [];
+          if (options.module) extra.push(`module=${options.module}`);
+          if (options.group) extra.push(`group=${options.group}`);
+          logger.warn(
+            `未找到与 "${pattern}" 匹配的用例${extra.length ? `（${extra.join(', ')}）` : ''}`,
+          );
         }
-        logger.warn(`未找到与 "${pattern}" 匹配的用例`);
         process.exitCode = ExitCode.NOT_FOUND;
         return;
       }
@@ -188,6 +206,23 @@ export async function runCommand(
   }
   if (options.authName && !options.storageState && !options.noAuth) {
     options.storageState = `.specmint/auth/storage/${options.authName}.json`;
+  }
+
+  // 模块 / group 过滤（无 pattern 时派生 grep；与 --priority / --authName 一致）
+  if ((options.module || options.group) && !options.grep && !pattern) {
+    const items = caseStore.list({
+      ...(options.module ? { module: options.module } : {}),
+      ...(options.group ? { group: options.group } : {}),
+    });
+    if (items.length === 0) {
+      const extra: string[] = [];
+      if (options.module) extra.push(`module=${options.module}`);
+      if (options.group) extra.push(`group=${options.group}`);
+      logger.warn(`没有匹配 ${extra.join(', ')} 的用例`);
+      process.exitCode = ExitCode.NOT_FOUND;
+      return;
+    }
+    options.grep = items.map((m) => m.name).join('|');
   }
 
   // P1：options.grep 派生场景下的 verdict 过滤

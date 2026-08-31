@@ -17,7 +17,7 @@ my-project/
     ├── cases/pages/                    # POM
     ├── auth/                           # 登录态子系统（按需生成 setup 文件）
     │   └── storage/<name>.json         # storageState（gitignore）
-    ├── cache/                          # v2.1+ 探索快照缓存（gitignore）
+    ├── cache/                          # v0.2.0+ 探索快照缓存（gitignore）
     │   └── explore/<hash>.json         # key = hash(URL + storageState)
     └── reports/                        # 运行产物（gitignore）
         └── runs/<batchId>/             # 每次 run 一个独立批次目录
@@ -25,7 +25,7 @@ my-project/
             ├── results.json            # Playwright JSON reporter 输出
             └── artifacts/              # Playwright outputDir（screenshots/videos/traces）
 
-> **包内配置接管（v2.2+）**：Playwright 配置不再生成于用户项目，统一在 `dist/runner/playwright.config.{js,ts}` 内由 specmint 自带。`.specmint/` 仅保留用户资产。深度自定义走 `specmint run --config <path>`。
+> **包内配置接管（v0.2.0+）**：Playwright 配置不再生成于用户项目，统一在 `dist/runner/playwright.config.{js,ts}` 内由 specmint 自带。`.specmint/` 仅保留用户资产。深度自定义走 `specmint run --config <path>`。
 ```
 
 **为什么不能改路径**：
@@ -98,7 +98,7 @@ my-project/
 |------|------|------|
 | `agent.model` | 否 | pi-agent model id。未设时自动选第一个 available。 |
 | `agent.delegate` | 否 | `sdk` \| `cli`，默认 `sdk` |
-| `runner.defaultBrowser` | 否 | `chromium`（v2.2+ 限定，扩展浏览器类型见 roadmap） |
+| `runner.defaultBrowser` | 否 | `chromium`（v0.2.0+ 限定，扩展浏览器类型见 roadmap） |
 | `runner.trace` | 否 | `retain-on-failure`（默认）/ `on-first-retry` / `off` —— 控制失败 trace 落盘策略 |
 | `runner.screenshot` | 否 | `only-on-failure`（默认）/ `on` / `off` |
 | `runner.timeoutMs` | 否 | 单用例超时（毫秒），默认 `30000` |
@@ -162,7 +162,7 @@ my-project/
 
 用例名 = `auth/login-success`，PI 生成时 PI 自动推断 group + module。
 
-### CLI 覆盖 PI 输出（v2.1+）
+### CLI 覆盖 PI 输出（v0.2.0+）
 
 如果 PI 推断的 `group` / `module` 不符合期望，generate 命令支持直接锁定：
 
@@ -222,7 +222,10 @@ specmint auth list                     # 列所有 setup + 状态
 ```bash
 specmint run                                    # 全部
 specmint run auth                               # 用例名前缀
+specmint run "classes/"                         # 目录/路径前缀（走 caseStore.list 派生 + verdict 卡口）
 specmint run --priority P0                      # 冒烟
+specmint run --module 用户认证                  # 按模块中文名过滤（meta.module 精确匹配）
+specmint run --group auth                       # 按 group 过滤（meta.group 或 name 第一段前缀）
 specmint run --auth admin                       # auth=admin 的用例
 specmint run --header "X-Tenant=qa"             # 临时 header
 specmint run --storage-state <path>             # 临时 storageState
@@ -305,7 +308,7 @@ specmint auth generate "管理员登录：admin/admin123，登录成功跳转 da
 specmint auth refresh admin
 ```
 
-### Playwright 自动配置（v2.2+）
+### Playwright 自动配置（v0.2.0+）
 
 Playwright 配置由 specmint 包内自带（`dist/runner/playwright.config.{js,ts}`），**不再生成于用户目录**。
 executor 通过 `import.meta.url` 定位并 `--config` 指向它，所有用户路径通过 `SPECMINT_*` env 注入。
@@ -359,7 +362,7 @@ LLM 输出仍可能不规范，**归一化层兜底**（`src/utils/normalize-met
 - `name` / `priority` 不合规 → throw（必填 + 强 enum）
 - `group` / `module` / `linkedTickets` / `tags` → warning + 跳过
 
-**CLI 强制覆盖（v2.1+）**：
+**CLI 强制覆盖（v0.2.0+）**：
 
 ```bash
 specmint generate "登录失败提示" \
@@ -370,7 +373,7 @@ specmint generate "登录失败提示" \
 
 `--module` 和 `--group` 会在 prompt 里以最高优先级告知 PI，绕过归一化层直接落盘，避免 PI 自由发挥产生脏目录。
 
-## 8. 探索快照缓存（v2.1+）
+## 8. 探索快照缓存（v0.2.0+）
 
 ### 用途
 
@@ -404,7 +407,7 @@ storageState 变化（例如切换 `auth/admin` → `auth/anonymous`）会自动
 
 加 `--no-explore-cache` 或 `rm` 对应 `.json` 即可。
 
-## 9. 少样本示例库（v2.1+）
+## 9. 少样本示例库（v0.2.0+）
 
 `src/agent/templates/` 内联了 4 套场景的完整样例（`login-flow` / `form-submit` / `list-search` / `detail-page`），`prompts.ts` 的 `pickExample()` 会按描述关键词自动挑选一个塞进 system prompt，作为 few-shot。
 
@@ -445,7 +448,7 @@ YYYY-MM-DD_HHMMSS[-<slug>]
     └── <test-name>-.../
 ```
 
-### 子进程 env 注入（v2.2+）
+### 子进程 env 注入（v0.3.0+）
 
 executor 在 spawn `playwright test` 前注入完整 env 协议（**统一收口于 `src/runner/spawn-env.ts`，run/rerun/auth refresh 三入口共用**）：
 
@@ -539,7 +542,7 @@ v2 默认单一角色。流程：
 
 强制约束在 `--priority` 锁定。如果发现 PI 输出 P1 但 CLI 传 P0，检查 `src/agent/tools.ts` 的 `save_case.execute`：应使用 `ctx.defaultPriority`。
 
-### Q：PI 生成的 group 不对怎么办（v2.1+）？
+### Q：PI 生成的 group 不对怎么办（v0.2.0+）？
 
 generate 命令支持 `--group` / `--module` 强制锁定，传了之后跳过归一化层直接落盘：
 

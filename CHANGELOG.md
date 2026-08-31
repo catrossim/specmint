@@ -202,6 +202,18 @@ npx specmint run --config ./my-playwright.config.ts
 
 ---
 
+## [0.4.0] - 2026-08-31
+
+### Fix
+- `run "classes/"` 这类含 `/` 的目录/路径前缀 pattern 原先被 fast-path 当作"已知文件路径"直接交给 playwright，下方"单文件模式 verdict gate"按 `m.specPath === resolvedPattern` 找不到匹配后被静默跳过，verdict 卡口完全失效。现统一走 `caseStore.list({ pattern, module, group })` + `applyVerdictGate` 派生，与 `--priority` / `--authName` 完全对齐（`src/commands/run.ts`）。
+
+### Feat
+- `run` 命令新增 `--module <module>` 与 `--group <group>` 选项：精确匹配 `meta.module` / `meta.group`，可与 `pattern` / `--grep` 叠加；无 `pattern` 时与 `--priority` / `--authName` 一致派生 grep 并过 verdict gate（`src/cli.ts`、`src/commands/run.ts`）。
+
+### Docs
+- `skills/specmint/SKILL.md` / `SKILL.codebuddy.md` / `SKILL.claude-code.md` `run` 命令行同步追加 `--module` / `--group`，并说明 `pattern` 支持目录前缀。
+- `docs/USAGE.md` "运行" 段新增 `--module` / `--group` 与目录前缀示例。
+
 ## [0.3.0] - 2026-08-30
 
 review 元数据升级为**真正的执行关卡**（内部 v2.5 增量）。本次发布把 `meta.review.verdict` 从静态标签升级为运行时过滤维度：`specmint run` 默认仅跑 `verdict=approved` 的用例；`specmint heal` 默认仅修 `verdict=needs-fix` 的用例；CI 流水线能精准避免「未裁决 / 需修复 / 已废弃」三类用例污染产物。新增 REPL 翻页裁决器，把人工仲裁从被动填字段变为主动流水线一环。

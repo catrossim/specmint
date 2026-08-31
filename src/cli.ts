@@ -78,8 +78,18 @@ program
 
 // --- generate ---
 program
-  .command('generate <description>')
-  .description('根据描述（或页面探索）生成测试用例（多条用例可用逗号分隔 description，并发生成）')
+  .command('generate [description]')
+  .description(
+    '根据描述（或页面探索）生成测试用例。\n' +
+    '  单条：specmint generate "用例描述" --priority P0\n' +
+    '  批量（逗号糖）：specmint generate "用例1, 用例2" --priority P0\n' +
+    '  批量（推荐，无歧义）：specmint generate --batch-file ./specs.txt --priority P0\n' +
+    '  批量（管道）：printf "用例1\\n用例2" | specmint generate --priority P0',
+  )
+  .option(
+    '--batch-file <path>',
+    '从文件按行读取 description 批量生成（每行一条，# 开头的行为注释，跳过空行）',
+  )
   .option('-u, --url <url>', '目标 URL，启用页面探索模式。多个用例共享同一 URL 时只探索一次')
   .option('--no-explore-cache', '禁用本次调用的探索快照缓存（强制重新打开浏览器）')
   .option('--explore-cache-ttl <ms>', '本次调用的缓存 TTL（毫秒），覆盖 config.explore.cache.ttlMs', (v) => parseInt(v, 10))
@@ -187,6 +197,8 @@ program
   .option('--storage-state <path>', '覆盖 config.auth.storageState（运行指定 storageState 文件）')
   .option('--no-auth', '跳过 storageState（公开页测试场景）')
   .option('--auth <name>', '按 auth 角色过滤用例（meta.auth === name）')
+  .option('--module <module>', '按模块中文名过滤（精确匹配 meta.module；与 pattern / grep 叠加时取交集）')
+  .option('--group <group>', '按 group 过滤（精确匹配 meta.group；若 meta.group 未设，则取用例名第一段 group 前缀）')
   .option(
     '--label <slug>',
     '批次语义标签（kebab-case，1-32 字符），会拼到批次号末尾，例如 --label smoke → 2026-08-27_150059-smoke',
