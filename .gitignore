@@ -30,11 +30,8 @@ test-results/
 .env
 .env.local
 .env.*.local
-# specmint
-.specmint/reports/runs/*/.tmp/
-.specmint/reports/runs/
-.specmint/cache/
-.specmint/.env
+# specmint 运行时产物（cases / config / auth / reports / cache 全在 .specmint/ 下）
+.specmint/
 
 # examples
 examples/.specmint.specmint/

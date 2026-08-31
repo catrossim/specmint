@@ -5,6 +5,32 @@ import { ExitCode } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
 import { relative as pathRelative, resolve as pathResolve } from 'node:path';
 import type { Priority, ReviewVerdict } from '../store/types.js';
+import type { CaseStore } from '../store/index.js';
+
+/**
+ * 按 verdict 卡口过滤用例名列表。
+ *
+ * 替代各处散落的 verdict 过滤循环（全量跑 / pattern 单名 / grep 派生），
+ * 收敛为唯一入口，避免以后再出现「某条派生分支漏过滤」的同类 bug。
+ *
+ * 找不到的 name（caseStore 里没有）按 verdict=pending 处理，会被 blockedSet 过滤。
+ */
+function applyVerdictGate(
+  names: string[],
+  caseStore: CaseStore,
+  blockedSet: Set<ReviewVerdict>,
+): { kept: string[]; skipped: Array<{ name: string; verdict: ReviewVerdict }> } {
+  const allByName = new Map(caseStore.list({}).map((m) => [m.name, m]));
+  const skipped: Array<{ name: string; verdict: ReviewVerdict }> = [];
+  const kept: string[] = [];
+  for (const name of names) {
+    const m = allByName.get(name);
+    const verdict = (m?.reviewVerdict ?? 'pending') as ReviewVerdict;
+    if (blockedSet.has(verdict)) skipped.push({ name, verdict });
+    else kept.push(name);
+  }
+  return { kept, skipped };
+}
 
 export interface RunOptions {
   browser?: string;
@@ -59,6 +85,39 @@ export async function runCommand(
     if (options.includeRejected) blockedSet.delete('rejected');
   }
 
+  // P1：全量跑分支的 verdict 卡口（无 pattern / 无 grep / 无 --priority / 无 --auth 时）
+  // 之前三个分支（pattern 单名 / grep 派生 / 直接文件路径）都覆盖了 verdict 卡口，
+  // 但裸 `specmint run` 漏了：这里从全量用例派生 grep，确保 pending/needs-fix/rejected 不被跑。
+  if (!pattern && !options.grep && gateEnabled) {
+    const allItems = caseStore.list({});
+    const { kept, skipped } = applyVerdictGate(
+      allItems.map((m) => m.name),
+      caseStore,
+      blockedSet,
+    );
+    if (kept.length === 0) {
+      const verdicts = Array.from(new Set(skipped.map((s) => s.verdict)));
+      logger.warn(
+        `[review gate] 全部 ${allItems.length} 条用例都被 verdict 过滤跳过（verdicts: ${verdicts.join(', ')}）`,
+      );
+      logger.warn(
+        `  用 --include-pending / --include-needs-fix / --include-rejected 放宽过滤，或 --force 关闭卡口`,
+      );
+      process.exitCode = ExitCode.NOT_FOUND;
+      return;
+    }
+    options.grep = kept.join('|');
+    if (skipped.length > 0 && !options.json) {
+      const preview = skipped
+        .slice(0, 5)
+        .map((s) => `${s.name}=${s.verdict}`)
+        .join(', ');
+      logger.warn(
+        `[review gate] 跳过 ${skipped.length} 条（verdict 被过滤）：${preview}${skipped.length > 5 ? ' ...' : ''}`,
+      );
+    }
+  }
+
   let resolvedPattern: string | undefined;
   if (pattern) {
     if (pattern.includes('/') || pattern.endsWith('.ts')) {
@@ -66,9 +125,15 @@ export async function runCommand(
     } else {
       const rawMatches = caseStore.list({ pattern });
       const matches = gateEnabled
-        ? rawMatches.filter(
-            (m) => !blockedSet.has((m.reviewVerdict ?? 'pending') as ReviewVerdict),
-          )
+        ? (() => {
+            const { kept } = applyVerdictGate(
+              rawMatches.map((m) => m.name),
+              caseStore,
+              blockedSet,
+            );
+            const keptSet = new Set(kept);
+            return rawMatches.filter((m) => keptSet.has(m.name));
+          })()
         : rawMatches;
       if (matches.length === 0) {
         if (gateEnabled && rawMatches.length > 0) {
@@ -128,15 +193,7 @@ export async function runCommand(
   // P1：options.grep 派生场景下的 verdict 过滤
   if (gateEnabled && options.grep) {
     const names = options.grep.split('|').filter(Boolean);
-    const allByName = new Map(caseStore.list({}).map((m) => [m.name, m]));
-    const skipped: Array<{ name: string; verdict: ReviewVerdict }> = [];
-    const kept: string[] = [];
-    for (const name of names) {
-      const m = allByName.get(name);
-      const verdict = (m?.reviewVerdict ?? 'pending') as ReviewVerdict;
-      if (blockedSet.has(verdict)) skipped.push({ name, verdict });
-      else kept.push(name);
-    }
+    const { kept, skipped } = applyVerdictGate(names, caseStore, blockedSet);
     if (kept.length === 0) {
       const verdicts = Array.from(new Set(skipped.map((s) => s.verdict)));
       logger.warn(
