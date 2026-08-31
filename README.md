@@ -1,510 +1,146 @@
 # specmint
 
-> 面向 agent 的 Playwright 页面测试 CLI 工具：自然语言生成用例、可重跑、历史可追溯。
+> **把自然语言用例自动转成可执行的 Playwright E2E 套件**
+> AI 起草 → 本地仲裁 → `npx specmint run` 直接落地 CI
 
-底层基于 [Playwright](https://playwright.dev/) 与本地 [pi-coding-agent](https://github.com/badlogic/pi-mono)。0 造轮子：复用 `@playwright/test` runner / retry / trace / HTML report，通过 SDK Extensions 注入结构化的用例库工具，让 LLM 直接落盘。
-
----
-
-## 特性
-
-- **自然语言生成用例**：根据描述或结合真实页面探索生成可读性好的 `.spec.ts` 脚本
-- **两种生成模式**：纯描述生成（快） / 页面探索生成（先用 Playwright 打开 URL 提取 a11y 快照，准确度更高）
-- **强约束可读性**：强制语义定位器（`getByRole` / `getByLabel` / `getByTestId`），禁止易碎选择器，关键步骤中文注释
-- **少样本示例库**：内置 `login-flow` / `form-submit` / `list-search` / `detail-page` 等场景示例，prompt 自动匹配，输出风格稳定
-- **探索快照缓存**：相同 URL 的 a11y 快照落盘复用（默认 TTL 10 分钟），实测每次生成省 5–15s 浏览器启动
-- **CLI 强制归类**：`--module` / `--group` 一键锁定用例模块与分组，避免 PI 自由发挥污染目录
-- **按模块 / 分组过滤**：`list` 与 `list_cases` 支持 `--module` / `--group`，大型用例库检索更高效
-- **重跑与历史**：失败用例一键重跑，每次运行落盘到 `reports/runs/<batchId>/run.json`，可追溯
-- **批次号友好**：`run` 默认产物目录用 `YYYY-MM-DD_HHMMSS` 命名；加 `--label <slug>` 可拼成 `2026-08-27_150059-smoke`，一眼看出谁跑、什么时候跑
-- **test-results 按批次号组织**：Playwright 的 screenshots/videos/traces 全部落到 `.specmint/reports/runs/<batchId>/artifacts/`，不再污染项目根
-- **可重入自愈**：`heal` 子命令把失败用例与日志委托给 pi-agent 自动修复
-- **面向 agent 友好**：所有命令支持 `--json` 输出，结构化错误，退出码语义清晰
-- **skill 一键导出**：`skill export` 生成 CodeBuddy / Claude Code 可加载的 SKILL.md
+specmint 是一条端到端的 Web UI 测试流水线：你用一句话描述"在登录页输入正确账号密码、点击登录、跳转到首页"，它会自动生成可维护的 Playwright 测试 + Page Object Module + 中文 spec，并在 `run` 时由 `pi-coding-agent` 引导真实浏览器回放。仲裁关卡、auth 角色管理、产物批次落点都内置齐全。
 
 ---
 
-## 安装
+## 1. 应用场景
+
+**适合**
+
+- **新接入 Web 项目的团队** — 没有现成 E2E 框架，又想跳过"先造框架再写用例"的几周冷启动
+- **回归测试自动化** — PRD/Story 写完即可生成对应用例，避免测试工程师手写 spec / POM
+- **CI 卡口 / 准入门禁** — PR 合并前要求对应模块的 specmint 用例 verdict=approved
+- **AI Coding IDE 用户**（CodeBuddy / Claude Code） — 安装 `skill` 后可在 IDE 中直接脚手架整个 repo
+
+**不太适合**
+
+- 已是大型老项目的团队（迁移成本高于收益）
+- 纯 API / 移动端 / 跨端测试（本项目仅针对 Web UI）
+- 不希望把测试逻辑交给 LLM 起草的合规场景
+
+对比传统 Playwright：specmint 不替换 `@playwright/test`，而是把"写 spec + 写 POM + 维护 selector"这三件事压成一句话。其余断言、fixture、retries、trace、HTML 报告仍由 Playwright 自身完成。
+
+---
+
+## 2. 快速开始（基于 examples，5 分钟跑通）
+
+> 前置：Node ≥ 20。`specmint` 自带 `pi-coding-agent` / `playwright` / `@playwright/test`，**安装 specmint 即可，无需额外 npm 装依赖**；唯一额外动作是下载一次 Chromium 二进制（`npx playwright install chromium`）。本演示直接用仓库自带的 `examples/` 作为被测目标，**无需准备任何业务项目**。
+
+### 2.1 启动 demo 服务
+
+仓库自带两个静态页面 + 零依赖静态服务器，作为 demo 的被测目标：
 
 ```bash
-# 0. 初始化项目（生成目录结构 + 默认配置；不再生成 playwright.config.ts，配置全在包内）
-npx specmint init
-
-# 1. 安装 npm 依赖
-npm install
-
-# 2. 安装 Playwright 浏览器（至少 chromium）
-#    内网/受限环境可省略这步；specmint 会自动回退到系统 Chrome/Edge
-npx playwright install chromium
+git clone https://github.com/catrossim/specmint
+cd specmint
+node examples/serve.mjs          # 起 http://localhost:4000（默认入口 /login-demo.html）
 ```
 
-需要 Node.js 20+。
+浏览器访问 `http://localhost:4000` 应看到登录页（admin/admin123 登录成功跳到 `dashboard.html`）。
 
-**Playwright 版本与浏览器 revision 的对应关系（重要）**：本项目锁定了 `@playwright/test@1.58.0` / `playwright@1.58.0`，对应 `chromium-1208` 与 `chromium_headless_shell-1208`。如果你本地已经装过 Playwright 浏览器但版本号不一致（如 1.50 / 1.55 / 1.59 / 1.62 等），需要按对应版本重新安装，否则 `chromium.launch()` 会报"Executable doesn't exist"。
-
-版本对应速查：
-| Playwright | chromium | headless_shell |
-|---|---|---|
-| 1.57.x | 1200 | 1200 |
-| **1.58.x（项目锁定）** | **1208** | **1208** |
-| 1.59.x | 1217 | 1217 |
-| 1.60.x | 1223 | 1223 |
-| 1.62.x | 1234 | 1234 |
-
-如果你想升级 Playwright，记得先 `npx playwright install chromium` 让浏览器跟上。
-
-浏览器缓存路径：
-- macOS：`~/Library/Caches/ms-playwright/`
-- Linux：`~/.cache/ms-playwright/`
-- Windows：`%LOCALAPPDATA%\ms-playwright\`
-
----
-
-## 快速开始（5 分钟跑通全链路）
+### 2.2 在 examples 里初始化 specmint playground
 
 ```bash
-# 1. 启动示例应用（另开终端）
-node examples/serve.mjs
-# → http://localhost:4000
+cd examples                      # 直接在 examples 目录起 specmint，演示与源码同仓
+npx specmint init                # 生成 .specmint/ 目录结构 + .gitignore 追加
+npx specmint models select       # 选 LLM（首次需要）；写入 .specmint/config.json 的 agent.model
+```
 
-# 2. 设置 baseURL（executor 透传给子进程 BASE_URL，不再断链）
-#    也可以写到 .specmint/config.json runner.baseURL，env 仍可临时覆盖
-export SPECMINT_BASE_URL=http://localhost:4000
+### 2.3 用一句话生成用例
 
-# 3. 用 generate 生成用例（探索模式）
+```bash
 npx specmint generate \
-  "登录：admin/admin123 登录成功跳转 dashboard，错误密码显示用户名或密码错误" \
-  --url http://localhost:4000/login-demo.html \
-  --name login-e2e
+  "在登录页输入正确账号密码，点击登录，跳转到 dashboard" \
+  --url http://localhost:4000 \
+  --priority P0
 
-# 4. 运行
-npx specmint run login-e2e
-
-# 5. 查看历史 / 重跑失败 / 修复
-npx specmint history
-npx specmint rerun
-npx specmint heal login-e2e
+# 查看生成结果（spec + POM + 中文步骤）
+npx specmint show auth/login-success
 ```
 
-完整端到端步骤见 [`examples/e2e-verify.md`](./examples/e2e-verify.md)。
+### 2.4 裁决 + 跑测
+
+```bash
+npx specmint review               # TTY 进 REPL 翻页裁决（a/p/n/r/s/q 单键）
+npx specmint run --no-auth        # 公开页场景跑测；用例已 approved 即默认跑
+```
+
+### 2.5 跑通后看什么
+
+| 想了解 | 看这里 |
+|---|---|
+| 完整 6 步教程（从零接入真实业务项目） | [**examples/e2e-verify.md**](./examples/e2e-verify.md) |
+| 手写用例的代码结构（spec + 语义定位器） | [**examples/login-flow.spec.ts**](./examples/login-flow.spec.ts) |
+| examples/ 目录约定 + 速查表 | [**examples/README.md**](./examples/README.md) |
+| 鉴权 / auth 子系统 / CI 集成 / FAQ | [**examples/e2e-verify.md §5–6**](./examples/e2e-verify.md) |
+
+完整使用手册（配置 / 命令清单 / PI 输出契约 / 缓存 / 批次号 / 退出码 / 升级指南等）见 [**docs/USAGE.md**](./docs/USAGE.md)。
 
 ---
 
-## 子命令一览
+## 3. 关键命令
 
-详细使用手册：[docs/USAGE.md](./docs/USAGE.md)
+> 完整选项请 `specmint <cmd> --help`，或看 [**docs/USAGE.md §3**](./docs/USAGE.md#3-子命令一览)。
 
 | 命令 | 用途 |
 |---|---|
-| `init` | 初始化项目结构与默认配置 |
-| `generate <description>` | 生成测试用例；支持 `--url` / `--module` / `--group` / `--priority` / `--no-explore-cache` / `--page-object` |
-| `run [pattern]` | 运行用例；透传 `--browser` / `--workers` / `--retries` / `--headed` / `--ui` / `--debug` / `--grep` / `--label <slug>` |
-| `rerun [--from <runId>]` | 重跑最近一次（或指定）失败用例 |
-| `list [--tag <tag>] [--module <m>] [--group <g>]` | 列出用例库，支持按模块 / 分组过滤 |
-| `show <name>` | 查看用例详情（含 spec 与 POM 代码） |
-| `delete <name> [--yes]` | 删除用例 |
-| `history [--limit N] [--case <name>]` | 查看运行历史 |
-| `heal <name> [--from <runId>]` | 自动修复失败用例（v0.3+ 仅 verdict=needs-fix 可被 heal；--include-* / --force 放宽） |
-| `review [list \| set <case> \| show <case>]` | 人工裁决用例（v0.3+ 默认仅 TTY 进 REPL 翻页裁决） |
-| `skill export [--target codebuddy\|claude-code]` | 导出 agent skill 定义到 `./skills/specmint/SKILL.md` |
+| `init` | 在当前目录生成 `specmint.config.json` + `.specmint/` 目录结构 |
+| `generate <描述>` | 自然语言批量生成用例（逗号分隔多个） |
+| `run [pattern]` | 跑用例；默认仅跑 `verdict=approved` |
+| `rerun [--from <runId>]` | 重跑最近一次失败用例 |
+| `list [filters]` | 列表展示用例；支持 tag / module / group / priority / auth / require-review 过滤 |
+| `show <name>` | 查看用例详情（spec + POM） |
+| `delete <name>` | 删除用例 |
+| `history` | 查看运行历史 |
+| `heal <name>` | 自动修复失败用例（仅 `verdict=needs-fix`） |
+| `review list\|set\|show` | 人工裁决 / REPL 翻页（见 [docs/review.md](./docs/review.md)） |
+| `skill export [--install]` | 导出 `SKILL.md` 到 `./skills/specmint/`，可同步安装到 IDE |
+| `models list\|current\|select` | 切换 agent model（数据源：pi-coding-agent） |
+| `auth list\|init\|refresh\|generate` | 管理 auth 角色（登录态 / 持久化） |
 
-所有子命令支持 `--json` 输出。
+### 3.1 最常用的 5 条命令
+
+```bash
+# 1. 生成
+npx specmint generate "在登录页输入正确账号密码 → 跳转首页"
+
+# 2. 审查 + 裁决（TTY 进 REPL）
+npx specmint review
+
+# 3. 跑
+npx specmint run
+
+# 4. 失败重跑
+npx specmint rerun
+
+# 5. 自愈失败用例
+npx specmint heal <case-name>
+```
 
 ---
 
-## 前端元素契约（可选）
+## 4. 文档导航
 
-specmint 默认用语义定位器（role/label/placeholder）生成 Playwright 用例。
-当团队维护了一份"前端元素契约"——一份带 `data-testid` 的元素清单——specmint 会在生成时把契约注入 prompt，让 LLM 直接采用约定的定位器，避免命名风格漂移。
-
-契约文件固定路径：`.specmint/contract.json`（与 `config.json` 同策略，**路径不可配置**）。
-
-**契约缺失时的行为**：与现状字节级一致——specmint 静默跳过注入，按现有策略生成。契约**完全可选**，不影响任何现有项目。
-
-**契约不合法时的行为**：JSON 解析失败 / version 不匹配 / elements 非数组 → 立即报错并退出，避免契约版本错位时静默加载。
-
-完整指南（前置知识、JSON 结构、操作步骤、示例、FAQ）：[docs/element-contract.md](./docs/element-contract.md)
-
----
-
-## review 人工裁决（v0.3+）
-
-`review` 把人工仲裁从「写个字段」升级为运行时执行关卡：裁决结果（verdict）直接决定 `run` / `heal` 是否放行某个用例，避免未审核 / 待修复 / 已废弃的用例污染 CI 产物。
-
-### 状态机
-
-```
-pending ──[a]pprove──→ approved ──[r]eject──→ rejected ──(人工回归)
-   │                      │
-   │                      └─[n]eeds-fix──→ needs-fix ──(heal)──┐
-   ├─[s]kip────────────→ skipped (历史保留)                    │
-   │                     ↑                                      │
-   └─────────────────────┴──────────[ 任何 ]──────────────────┘
-```
-
-verdict 状态机共 5 态：`pending` / `approved` / `needs-fix` / `rejected` / `skipped`。
-
-### 与 run / heal 的联动
-
-| 命令 | 默认行为 | 放宽标志 |
-|---|---|---|
-| `specmint run` | 仅跑 `verdict=approved` | `--include-pending` / `--include-needs-fix` / `--include-rejected` / `--force` / `--no-require-review` |
-| `specmint rerun` | 与 run 一致 | 与 run 一致 |
-| `specmint heal` | 仅修 `verdict=needs-fix` | `--include-pending` / `--include-approved` / `--include-rejected` / `--force` / `--no-require-review` |
-
-### REPL 翻页裁决（默认入口）
-
-```bash
-$ specmint review
-[1/12] auth/login-success                       pending
-  spec: 用户在登录页输入正确的账号密码，点击登录，跳转到首页
-  > 选择裁决 [a/p/n/r/s/q]: _
-```
-
-单键裁决：`a` approved / `n` needs-fix / `r` rejected / `s` skipped / `q` 退出。逐条翻页，无需重新加载列表。
-
-REPL 默认只看 `verdict=pending`。想重新翻已裁决项（重审）：
-
-```bash
-specmint review --include-decided   # REPL 翻全部（含 approved/needs-fix/rejected）
-```
-
-非 TTY（脚本/CI 场景）自动降级为 `specmint review list`，可加 `--all` 查看全部：
-
-### 脚本/CI 场景
-
-```bash
-# 单条裁决
-specmint review set auth/login-success --verdict approved --reviewer alice
-specmint review set auth/login-failure --verdict needs-fix --reason "selector 飘"
-
-# 批量过滤
-specmint review list --verdict needs-fix
-
-# 查看详情
-specmint review show auth/login-success
-```
-
-### 配置
-
-```jsonc
-{
-  "review": {
-    "requireBeforeRun":  true,                              // run 卡口开关
-    "requireBeforeHeal": true,                              // heal 卡口开关
-    "pendingOnGenerate": true,                              // generate 后是否提示进入 review REPL
-    "reviewerSource":    "git-user",                        // 默认裁决人来源：git-user / env / none
-    "blockedOnRun":      ["pending", "needs-fix", "rejected"],
-    "blockedOnHeal":     ["pending", "approved", "rejected", "skipped"]
-  }
-}
-```
-
-完全关闭卡口（回到 v0.2.0 老行为）：
-
-```jsonc
-{
-  "review": {
-    "requireBeforeRun":  false,
-    "requireBeforeHeal": false
-  }
-}
-```
-
-或在运行时加 `--no-require-review` / `--force`。
-
-### 回滚到 v0.2.0 老行为
-
-如果 CI 突然少跑用例，或团队还没建立 review 流程，可在 `.specmint/config.json` 中：
-
-```jsonc
-{ "review": { "requireBeforeRun": false, "requireBeforeHeal": false } }
-```
-
-无需改任何代码，所有 v0.2.0 的命令 / 标志 / 行为都保留。
-
----
-
-## Agent 调用样例
-
-### 全局约定
-
-- 所有子命令支持 `--json`，错误统一为 `{ ok: false, error: { code, message, hint } }`
-- 退出码语义见下文"输出契约"
-- 推荐先调用 `specmint skill export` 把 SKILL.md 加载到 agent，让 agent 自动学会调用方式
-
-### 推荐流程
-
-```bash
-# 1. 生成用例（探索模式）
-specmint generate "登录：admin/admin123 登录成功跳转 dashboard" \
-  --url https://example.com/login \
-  --name login-success \
-  --json
-
-# 解析返回的 savedCase.specPath / metaPath，决定下一步
-
-# 2. 运行
-specmint run login-success --json
-
-# 3. 如果失败，查看历史拿 runId
-specmint history --json
-
-# 4. 重跑
-specmint rerun --json
-
-# 5. 自愈
-specmint heal login-success --json
-```
-
-### 退出码（process.exitCode）
-
-| 码 | 含义 |
+| 文档 | 内容 |
 |---|---|
-| 0 | 成功 |
-| 1 | 通用错误 |
-| 2 | 参数错误（USAGE） |
-| 3 | 子命令未实现 |
-| 4 | 资源不存在 |
-| 5 | 重复创建 |
-| 6 | agent 调用失败 |
-| 7 | 测试失败 |
-| 8 | IO 错误 |
+| [**docs/USAGE.md**](./docs/USAGE.md) | 完整使用手册（13 章节）：项目布局、配置、命令清单、PI 输出契约、缓存、批次号与产物落点、退出码、FAQ、升级指南 |
+| [**docs/review.md**](./docs/review.md) | 人工裁决状态机 / REPL 翻页 / 脚本裁决 / 运行时卡口 / v0.2.0 行为回滚 |
+| [**docs/element-contract.md**](./docs/element-contract.md) | 探查阶段元素契约（spec / POM 之间必须遵守的命名 / 引用规则） |
+| [**docs/RELEASING.md**](./docs/RELEASING.md) | 维护者发布流程 / 预发布通道 / 开发态常用命令 |
+| [**examples/README.md**](./examples/README.md) | examples 目录约定 + 两种典型场景（从零接入 / 手写用例） |
+| [**examples/e2e-verify.md**](./examples/e2e-verify.md) | 从零接入真实业务项目的完整 6 步流程（含 CI / FAQ） |
+| [**examples/login-flow.spec.ts**](./examples/login-flow.spec.ts) | 手写用例样例：spec 结构 / 语义定位器 / 用例分组 |
+| [**CHANGELOG.md**](./CHANGELOG.md) | 版本变更记录（v0.1.0 → v0.3.0） |
 
 ---
 
-## 输出契约（--json）
+## 5. 当前状态
 
-### generate
-
-```json
-{
-  "ok": true,
-  "mode": "explore-assisted",
-  "description": "...",
-  "durationMs": 4321,
-  "toolCalls": [{ "name": "save_case", "input": { "name": "login-success", ... } }],
-  "savedCase": {
-    "name": "login-success",
-    "specPath": "/abs/path/tests/login-success.spec.ts",
-    "metaPath": "/abs/path/tests/login-success.meta.json",
-    "pageObjectPath": null
-  },
-  "content": "LLM 输出文本..."
-}
-```
-
-### run
-
-```json
-{
-  "ok": true,
-  "runId": "2026-08-27T10-30-00-000Z",
-  "exitCode": 0,
-  "status": "passed",
-  "durationMs": 12345,
-  "command": "npx playwright test tests/login-success.spec.ts",
-  "startedAt": "2026-08-27T10:30:00.000Z"
-}
-```
-
-### history
-
-```json
-{
-  "ok": true,
-  "count": 3,
-  "items": [
-    {
-      "runId": "...",
-      "startedAt": "...",
-      "finishedAt": "...",
-      "status": "passed",
-      "totals": { "passed": 3, "failed": 0, "skipped": 0, "timedOut": 0, "interrupted": 0, "durationMs": 4321 },
-      "failedTests": []
-    }
-  ]
-}
-```
-
-### list
-
-```json
-{
-  "ok": true,
-  "count": 2,
-  "items": [
-    {
-      "name": "login-success",
-      "description": "...",
-      "tags": ["smoke"],
-      "status": "passed",
-      "lastRunAt": "...",
-      "specPath": "tests/login-success.spec.ts",
-      "metaPath": "tests/login-success.meta.json",
-      "pageObjectFile": null
-    }
-  ]
-}
-```
-
----
-
-## 架构
-
-```
-src/
-├── cli.ts                # commander 入口
-├── config.ts             # specmint.config.json 加载
-├── commands/             # 各子命令实现
-├── agent/                # pi-agent SDK 集成 + Extensions + prompt + 页面探索
-│   ├── explore.ts        # 页面探索：a11y 快照 + CLI 约束注入
-│   ├── explore-cache.ts  # 探索快照缓存（URL + storageState 指纹 + TTL）
-│   ├── checkpoint.ts     # agent 运行断点（可恢复）
-│   └── templates/        # 内置少样本示例库（login-flow / form-submit / list-search / detail-page）
-├── store/                # 用例库 + 运行历史
-├── runner/               # executor (CLI spawn) + reporter (结果落盘)
-├── templates/            # spec / POM / meta 骨架
-└── utils/                # logger + errors + 并发控制 + 重试 + 模板渲染
-```
-
-数据流：
-
-```
-generate  → CaseStore.save → tests/*.spec.ts + *.meta.json
-run       → HistoryStore.createRun → 生成 batchId (YYYY-MM-DD_HHMMSS[-<slug>])
-            → spawn playwright test 子进程（注入 SPECMINT_OUTPUT_DIR / SPECMINT_JSON_OUTPUT_FILE）
-              ├─ artifacts → .specmint/reports/runs/<batchId>/artifacts/  (screenshots/videos/traces)
-              └─ results.json → .specmint/reports/runs/<batchId>/results.json
-            → reporter.onTestEnd → HistoryStore.appendResult + CaseStore.applyRunStats
-            → reporter.onEnd → HistoryStore.finalizeRun
-rerun     → HistoryStore.getLatestFailedTestNames → runTests(pattern)
-history   → HistoryStore.listRuns
-heal      → pi-agent.update_case → CaseStore.updateCode
-skill     → 写入 ./skills/specmint/SKILL.md
-```
-
-## 批次号与产物落点
-
-`run` 命令每次执行都会生成一个**批次号**（batchId）作为该次运行的唯一目录名：
-
-```
-YYYY-MM-DD_HHMMSS[-<slug>]
-```
-
-| 形态 | 示例 | 说明 |
-|------|------|------|
-| 默认 | `2026-08-27_150059` | 短、自带自然排序、shell 安全 |
-| 带 `--label` | `2026-08-27_150059-smoke` | 拼上 kebab-case 语义标签，便于一眼识别 |
-| 冲突 | `2026-08-27_150059-smoke-2` | 同批次号已存在时自动追加 `-2` / `-3` |
-
-每个批次号对应一个目录，里面整齐地放齐所有产物：
-
-```
-.specmint/reports/runs/<batchId>/
-├── run.json                # specmint 结构化历史（runId / label / cases / totals / results）
-├── results.json            # Playwright JSON reporter 输出
-└── artifacts/              # Playwright outputDir（screenshots / videos / traces）
-    └── <test-name>-.../
-```
-
-**子进程注入**：executor 在 spawn playwright CLI 时会注入两个环境变量：
-
-- `SPECMINT_OUTPUT_DIR` → `.specmint/reports/runs/<batchId>/artifacts`
-- `SPECMINT_JSON_OUTPUT_FILE` → `.specmint/reports/runs/<batchId>/results.json`
-
-自 v2.3 起 `playwright.config.ts` 完全在包内（`dist/runner/playwright.config.{js,ts}`），executor 通过 `import.meta.url` 定位并以 `--config` 指向包内配置。`outputDir` / JSON reporter 落点由这两 env 决定；即使 env 缺失，仍会回退到 `./test-results` / `./reports/runs/.tmp/results.json`，但**强烈建议**保持 env 注入启用，让 test-results 也待在 `.specmint/` 内。
-
-**`--label` 校验**：kebab-case（`^[a-z][a-z0-9-]*[a-z0-9]$`），长度 1–32。合法示例：`smoke`、`p0-regression`、`nightly-batch-2`。
-
----
-
-## 配置
-
-`specmint.config.json` 关键字段：
-
-```json
-{
-  "agent": { "model": "anthropic/claude-sonnet-latest", "delegate": "sdk" },
-  "explore": {
-    "headless": true,
-    "timeoutMs": 15000,
-    "maxElements": 200,
-    "cache": { "enabled": true, "ttlMs": 600000, "dir": ".specmint/cache/explore" }
-  },
-  "generation": {
-    "selectorPolicy": {
-      "prefer": ["getByRole", "getByLabel", "getByPlaceholder", "getByTestId", "getByText"],
-      "avoid": ["nth-child", "nth-of-type", "complex-css", "xpath"]
-    }
-  },
-  "storage": { "casesDir": "./tests", "reportsDir": "./reports" }
-}
-```
-
-修改后立即生效，无需重启。
-
-**探索快照缓存**：相同 URL（+ storageState 指纹）的 a11y 快照会落到 `.specmint/cache/explore/` 复用，`ttlMs` 内多次生成不会重复打开浏览器。需要强制刷新时加 `--no-explore-cache` 或直接删除目录。
-
----
-
-## 开发
-
-```bash
-# 开发态执行（无需编译）
-npx tsx src/cli.ts <subcommand>
-
-# 编译为 dist/
-npm run build
-
-# 跑单元 typecheck
-npm run typecheck
-```
-
----
-
-## License
-
-MIT — 详见 [LICENSE](./LICENSE)。
-
----
-
-## 更新日志
-
-完整变更记录（v2 → v2.4）见 [CHANGELOG.md](./CHANGELOG.md)。当前发布版本 `0.2.0` 聚合了所有内部迭代能力。
-
----
-
-## 发布
-
-维护者发布新版本的检查清单：
-
-```bash
-# 1. 跑全量质量门
-npm run typecheck
-npm run build
-npm pack --dry-run                # 确认包内容（142 文件、145 KB）
-
-# 2. 确认无遗留
-git status                        # 工作树干净
-cat package.json | head -10       # 确认 version 正确
-
-# 3. 更新版本号（CHANGELOG.md 同步加新段）
-npm version patch                 # 0.1.0 → 0.1.1
-# 或 minor / major
-
-# 4. 发布到 npm（默认公共 registry）
-npm publish                       # 真正的发布
-# 验证：npm info specmint
-
-# 5. 提交 tag + 推仓库
-git push --follow-tags
-```
-
-**预发布通道**：
-
-```bash
-# Beta / RC（带 dist-tag，安装时用 npm install specmint@beta）
-npm version 0.2.0-beta.1
-npm publish --tag beta
-```
+- 当前发布版本：**`0.3.0`**（首个公开发版）
+- Node：≥ 20
+- 自带依赖：`@earendil-works/pi-coding-agent` ^0.84.0、`@playwright/test` 1.58.0、`playwright` 1.58.0（**用户业务项目无需单独安装**）
+- License：[MIT](./LICENSE)

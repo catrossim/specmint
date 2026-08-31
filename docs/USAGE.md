@@ -586,3 +586,16 @@ specmint generate "登录失败提示" --priority P1 --group auth --module 用�
 2. **用户项目**的 `playwright.config.ts`（在 `.specmint/` 下）会被 `init` 重新生成；如已自改，请手动加入 `outputDir: process.env.SPECMINT_OUTPUT_DIR ?? './test-results'` 与 `outputFile: process.env.SPECMINT_JSON_OUTPUT_FILE`
 3. 如果之前项目根有遗留的 `test-results/` / `playwright-report/`，手动 `rm -rf` 清理一次即可
 4. 旧的 `.specmint/reports/runs/<ISO 时间戳>/` 目录仍然可用（路径格式升级为 `YYYY-MM-DD_HHMMSS` 但目录布局兼容）
+
+---
+
+## 附录 A：Playwright 版本对应
+
+| specmint 版本 | 推荐 Playwright | 备注 |
+|---|---|---|
+| v0.1.0 – v0.2.x | `@playwright/test` ^1.40 | 经典双 layer 架构 |
+| v0.3.0+        | `@playwright/test` ^1.40 | 包内 `playwright.config.ts`，executor 通过 `import.meta.url` 定位 |
+
+升级 specmint 到 v0.3.0+ 不要求用户项目再持有 `playwright.config.ts`，但若有自定义项（如视口 / trace 开关），可在用户项目根目录新建 `playwright.config.ts`，executor 会自动 `--config <用户配置>` 优先于包内配置。
+
+详细落点规则见本文第 9 节"批次号与产物落点"。

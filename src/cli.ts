@@ -59,7 +59,7 @@ function collectSetParam(value: string, previous: Record<string, string> = {}): 
 program
   .name('specmint')
   .description('面向 agent 的 Playwright 页面测试 CLI 工具')
-  .version('0.2.0')
+  .version('0.3.0')
   .option('--json', '全局 JSON 输出模式')
   .hook('preAction', (thisCommand) => {
     const opts = thisCommand.opts<{ json?: boolean }>();
