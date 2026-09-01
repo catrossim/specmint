@@ -1,6 +1,6 @@
 {
   "name": "specmint",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "面向 agent 的 Playwright 页面测试 CLI 工具：自然语言生成用例、可重跑、历史可追溯",
   "type": "module",
   "bin": {
