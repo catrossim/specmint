@@ -432,9 +432,13 @@ function isInteractive(): boolean {
   return Boolean(process.stdin.isTTY) && Boolean(process.stdout.isTTY);
 }
 
-/** 裁决人回退链：$SPECMINT_REVIEWER → $USER → `git config user.name` → 'unknown' */
+/** 裁决人回退链：$SPECMINT_REVIEWER → $USER → $USERNAME → $LOGNAME → `git config user.name` → 'unknown' */
 function defaultReviewer(): string {
-  const env = process.env.SPECMINT_REVIEWER || process.env.USER;
+  const env =
+    process.env.SPECMINT_REVIEWER ||
+    process.env.USER || // *nix
+    process.env.USERNAME || // Windows
+    process.env.LOGNAME; // *nix 兜底
   if (env) return env;
   try {
     const out = execSync('git config user.name', {

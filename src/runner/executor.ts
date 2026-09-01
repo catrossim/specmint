@@ -13,10 +13,14 @@
  * 配置定位：
  * - 默认走 resolveRunnerConfigPath() —— 包内 dist/runner/playwright.config.{js,ts}
  * - CLI --config 透传时显式覆盖
+ *
+ * 子进程启动：
+ * - 走 spawn-playwright.ts 统一助手（createRequire 直连用户项目 playwright CLI，
+ *   win32 兼容性 + 路径空格安全），不直接 spawn npx
  */
-import { spawn, type ChildProcess } from 'node:child_process';
 import { resolveRunnerConfigPath } from './config-resolver.js';
 import { buildSpawnEnv } from './spawn-env.js';
+import { spawnPlaywrightTest, type PlaywrightSpawnResult } from './spawn-playwright.js';
 import { HistoryStore } from '../store/history-store.js';
 import type { AutoTestConfig } from '../config.js';
 import type { RunConfigSnapshot, RunStatus } from '../store/types.js';
@@ -72,9 +76,6 @@ export interface RunResult {
   startedAt: string;
 }
 
-const PW_TEST_RUNNER = 'npx';
-const PW_TEST_BIN_ARGS = ['playwright', 'test'];
-
 export async function runTests(options: RunOptions): Promise<RunResult> {
   const cwd = options.cwd ?? process.cwd();
   const runnerConfigPath = resolveRunnerConfigPath(options.runnerConfigPath);
@@ -116,9 +117,9 @@ export async function runTests(options: RunOptions): Promise<RunResult> {
     config: options.config,
   });
 
-  let spawnResult: SpawnResult;
+  let spawnResult: PlaywrightSpawnResult;
   try {
-    spawnResult = await spawnPlaywright(args, { cwd, env });
+    spawnResult = await spawnPlaywrightTest(args, { cwd, env });
   } catch (err) {
     historyStore.finalizeRun(record.runId, {
       status: 'error',
@@ -153,13 +154,15 @@ export async function runTests(options: RunOptions): Promise<RunResult> {
     exitCode: spawnResult.exitCode,
     status: finalStatus,
     durationMs,
-    command: `${PW_TEST_RUNNER} ${args.join(' ')}`,
+    command: spawnResult.command,
     startedAt: record.startedAt,
   };
 }
 
 function buildPlaywrightArgs(options: RunOptions & { runnerConfigPath: string }): string[] {
-  const args: string[] = [...PW_TEST_BIN_ARGS, '--config', options.runnerConfigPath];
+  // 注意：返回的 args 是 `playwright test` 之后的参数列表（不含 'playwright' / 'test' 前缀）
+  // 由 spawn-playwright.ts 助手负责把前缀接上，并直连 cli.js / 回退 npx
+  const args: string[] = ['--config', options.runnerConfigPath];
   if (options.workers !== undefined) args.push('--workers', String(options.workers));
   if (options.retries !== undefined) args.push('--retries', String(options.retries));
   if (options.maxFailures !== undefined) args.push('--max-failures', String(options.maxFailures));
@@ -171,30 +174,4 @@ function buildPlaywrightArgs(options: RunOptions & { runnerConfigPath: string })
   if (options.pattern) args.push(options.pattern);
   if (options.passthrough) args.push(...options.passthrough);
   return args;
-}
-
-interface SpawnResult {
-  exitCode: number;
-  signal: NodeJS.Signals | null;
-}
-
-function spawnPlaywright(
-  args: string[],
-  options: { cwd: string; env: NodeJS.ProcessEnv },
-): Promise<SpawnResult> {
-  return new Promise((resolveP, reject) => {
-    const child: ChildProcess = spawn(PW_TEST_RUNNER, args, {
-      cwd: options.cwd,
-      env: options.env,
-      stdio: 'inherit',
-    });
-
-    child.on('error', reject);
-    child.on('exit', (code, signal) => {
-      resolveP({
-        exitCode: code ?? 1,
-        signal: signal as NodeJS.Signals | null,
-      });
-    });
-  });
 }

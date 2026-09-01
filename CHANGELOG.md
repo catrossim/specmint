@@ -4,8 +4,8 @@ specmint 项目的所有重要变更都会记录在这里。版本号遵循 [Sem
 
 ## 版本说明
 
-- **当前发布版本**：`0.5.0`（内部 v2.6 增量，详见 [0.5.0] 段）
-- 内部迭代以 `v2` / `v2.1` / `v2.2` / `v2.3` / `v2.4` / `v2.5` / `v2.6` 标识，本文件作为对外权威变更日志。
+- **当前发布版本**：`0.5.1`（内部 v2.7 增量，详见 [0.5.1] 段）
+- 内部迭代以 `v2` / `v2.1` / `v2.2` / `v2.3` / `v2.4` / `v2.5` / `v2.6` / `v2.7` 标识，本文件作为对外权威变更日志。
 - 自 `0.1.0` 起，每个 npm release 都会在此新增一段 `## [x.y.z] - YYYY-MM-DD`。
 
 ---
@@ -202,17 +202,54 @@ npx specmint run --config ./my-playwright.config.ts
 
 ---
 
-## [Unreleased] - TBD
+## [0.5.1] - 2026-09-01
 
-playwright 依赖约束从 `dependencies` 收紧的精确版本 1.58.0 改为 `peerDependencies` 的开放范围（>=1.58.0）。**各接入项目可自行决定** playwright / @playwright/test 的具体版本（如 `1.69.0`、`^1.58.0`、内网镜像版本等），specmint 不再强制 hover 一份 1.58.0 进去。
+Windows 兼容性修复（内部 v2.7 增量）。0.5.0 在 Windows 上无法运行：`specmint run` 与 `specmint auth refresh` 直接抛 `spawn npx ENOENT`（Windows 上 npx 是 `npx.cmd`，无 shell 时 Node 找不到可执行文件）；`auth init` 生成的 setup.ts 模板中 `STORAGE_STATE` 残留为用户机器绝对路径；reviewer 审计人静默退化为 `'unknown'`（Windows 上 `process.env.USER` 不存在）；用例扫描 `pages` / `node_modules` 比较大小写敏感（NTFS 不敏感目录下被误读为用例）；`npm run build` 在 Windows 上裸调 `chmod` 失败。另随本版首次发布此前已提交的 playwright peerDependencies 化（见文末附节）。
 
-### 动机
+### 关键改动
 
-- specmint 包内对 `@playwright/test` 仅 `import type`（`src/runner/playwright.config.ts` / `reporter.ts`），运行时一律走用户 cwd 的 `npx playwright test`（`src/runner/executor.ts`）。**实际生效的就是接入项目自己安装的版本**——specmint 一侧根本没必要锁
+- **新增 `src/runner/spawn-playwright.ts`**：跨平台 Playwright CLI 启动助手
+  - 优先 `createRequire(cwd/package.json)` 解析用户项目 CLI 直连（`spawn(process.execPath, [cliPath, 'test', ...args])`）—— 不经 shell，天然规避 Windows cmd 下含空格路径参数被撕裂的问题（如 `C:\Users\John Doe\...`）
+  - 解析候选兼容 playwright ≥ 1.38 的 `exports` 字段限制（已对照 1.58.0 真实包结构验证）：`@playwright/test/cli`（exports 键精确匹配）→ 借道 `playwright/package.json` 定位包根拼 `cli.js` → 无 exports 老版本裸 subpath 兜底
+  - 解析失败回退 `npx`（win32 加 `shell: true`），仅 warn 一次
+  - `child.on('error')` 捕获 ENOENT / EINVAL 转友好 CliError，提示确认 playwright 已安装、npm 在 PATH
+- **`src/runner/executor.ts`**：
+  - 删除内联 `spawnPlaywright` / `PW_TEST_RUNNER` / `PW_TEST_BIN_ARGS`（消除与 auth.ts 之间的实现漂移，与 `spawn-env.ts` 注释中"统一收口"的既定设计意图对齐）
+  - `RunResult.command` 改用助手返回的实际启动命令串（直连模式显示 `node <cliPath> test ...`，回退模式显示 `npx playwright test ...`）
+- **`src/commands/auth.ts`**：
+  - `auth refresh` 改用新助手
+  - `auth init` 第 124 行 `storageStatePath.replace(cwd + '/', '')` → `relative(cwd, storageStatePath).replace(/\\/g, '/')`，复用 `case-store.ts:72,231` 既有正确范式；模板中 `STORAGE_STATE` 始终是正斜杠相对路径
+- **`src/commands/review.ts`**：`defaultReviewer` 兜底链补 `process.env.USERNAME`（Windows）与 `process.env.LOGNAME`（*nix 兜底），不再静默退化为 `'unknown'`；`src/config.ts` 与 `src/cli.ts` 中 reviewer 推断链的自描述文案同步
+- **`src/store/case-store.ts`**：
+  - 用例目录扫描（walk）的 `pages` / `node_modules` 比较改大小写不敏感（NTFS 兼容 `Pages/`、`NODE_MODULES/` 等）
+  - `CaseSummary.specPath` / `metaPath` / `pageObjectFile` 补 `.replace(/\\/g, '/')` 归一化（与同文件既有范式一致）——修复 Windows 下 run.ts 单文件 verdict gate 按路径字符串匹配永不命中、静默失效的问题
+- **`package.json`**：
+  - `build` 脚本 `chmod +x` 包到 `node -e "if (process.platform !== 'win32') ..."`，Windows 本地 / CI 构建不再失败
+  - version `0.5.0` → `0.5.1`
+  - 删除 `files` 中悬空的 `templates` 条目（模板经 tsc 编译进 dist，仓库无根级 templates 目录）
+
+### 向后兼容
+
+- **macOS / Linux 行为不变**：直连模式与原 `spawn('npx', args)` 行为等价，省掉一层 npx 解析开销
+- **`run` / `refresh` 命令退出码与历史记录 `command` 字段含义不变**：仍为退出码 + 实际启动命令串；显示串更接近真实调用链
+- **未安装 playwright 的项目**：仍按既有逻辑在 `init` 探测时 warn，不引入新的 fail-fast 节点
+
+### 验收
+
+- macOS / Linux：`npm run typecheck` 通过；`specmint run` / `specmint auth refresh` 行为与 0.5.0 一致；CLI 解析候选已对照本仓库 node_modules 中 playwright 1.58.0 真实包结构实测（`@playwright/test/cli` 与借道 `playwright/package.json` 均命中，旧裸候选确认抛 `ERR_PACKAGE_PATH_NOT_EXPORTED`）
+- Windows：用户侧验证 `specmint run` 不再 ENOENT；`auth init` 生成的 setup.ts 中 `STORAGE_STATE` 为正斜杠相对路径；`npm run build` 本地可构建
+
+### 附：playwright peerDependencies 化（随本版首次发布，commit f765404）
+
+playwright 依赖约束从 `dependencies` 收紧的精确版本 1.58.0 改为 `peerDependencies` 的开放范围（>=1.58.0）。**各接入项目可自行决定** playwright / @playwright/test 的具体版本（如 `1.69.0`、`^1.58.0`、内网镜像版本等），specmint 不再强制带一份 1.58.0 进去。
+
+#### 动机
+
+- specmint 包内对 `@playwright/test` 仅 `import type`（`src/runner/playwright.config.ts` / `reporter.ts`），运行时一律走用户 cwd 的 playwright CLI（`src/runner/executor.ts`）。**实际生效的就是接入项目自己安装的版本**——specmint 一侧根本没必要锁
 - 之前的 `dependencies: "playwright": "1.58.0"` 精确锁定会让装了更高版本 playwright 的接入项目被 npm `dedupe` / `peer` 冲突伤到，常见表现是锁了一两份或强制 fallback
 - 接入方在 CI / 内网镜像 / 公司统一前端基建下经常需要固定特定版本，硬锁定是阻碍
 
-### 关键改动
+#### 关键改动
 
 - `package.json`
   - `dependencies` 中移除 `playwright` 与 `@playwright/test`
@@ -227,12 +264,12 @@ playwright 依赖约束从 `dependencies` 收紧的精确版本 1.58.0 改为 `p
     - 都装好：打印已检测到的版本（便于排错）
   - 完全没装时打印 `⚠ 未检测到 playwright / @playwright/test`，避免 run/generate 阶段才报"找不到模块"
 - `README.md`
-  - 「当前状态」段删除"`playwright` 1.58.0（用户业务项目无需单独安装）」措辞
-  - 改为明确列出 `peerDependencies` 政策：用户自定版本、`specmint init` 检测、executor 走 `npx playwright test`
+  - 「当前状态」段删除"`playwright` 1.58.0（用户业务项目无需单独安装）"措辞
+  - 改为明确列出 `peerDependencies` 政策：用户自定版本、`specmint init` 检测、executor 走用户项目的 playwright CLI
 
-### 向后兼容
+#### 向后兼容
 
-- **当前已安装 specmint 的项目不受影响**：之前的 1.58.0 已经躺在 `node_modules` 里，新版 specmint 不会再拖一份，对应的 `npx playwright test` 解析依旧命中已存在的版本
+- **当前已安装 specmint 的项目不受影响**：之前的 1.58.0 已经躺在 `node_modules` 里，新版 specmint 不会再拖一份，对应的 playwright CLI 解析依旧命中已存在的版本
 - **如果接入方清掉 lockfile 重装**：peer 缺失会触发 npm v7+ 自动安装（"需要安装 peerDep"），初次 init 后用户可改 package.json 调整到自家偏好的版本
 - **强制最低版本约束** `>=1.58.0`：specmint 0.5.0 之前的所有内部实现都基于该版本 API；低于 1.58.0 的接入项目升级 specmint 时需先升 playwright
 

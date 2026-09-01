@@ -12,8 +12,7 @@
  * - generate 复用 PI 流程，prompt 强化为"写 setup 文件"
  */
 import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { spawn } from 'node:child_process';
+import { join, relative } from 'node:path';
 import { STORAGE_LAYOUT } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { CliError, ExitCode } from '../utils/errors.js';
@@ -24,6 +23,7 @@ import { buildGenerateSetupPrompt } from '../agent/prompts.js';
 import { loadConfig } from '../config.js';
 import { resolveRunnerConfigPath } from '../runner/config-resolver.js';
 import { buildSpawnEnv } from '../runner/spawn-env.js';
+import { spawnPlaywrightTest } from '../runner/spawn-playwright.js';
 
 const SETUP_FILE_RE = /\.setup\.ts$/;
 const KEBAB_CASE_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
@@ -121,7 +121,9 @@ export async function authInitCommand(
     });
   }
   const storageStatePath = join(cwd, STORAGE_LAYOUT.authStorage, `${name}.json`);
-  const storageRel = storageStatePath.replace(cwd + '/', '');
+  // 相对 cwd，并统一转为正斜杠（Windows 下 relative() 默认返回反斜杠路径）
+  // 与 case-store.ts 中 pathRelative(...).replace(/\\/g, '/') 范式一致
+  const storageRel = relative(cwd, storageStatePath).replace(/\\/g, '/');
   const template = `import { test as setup, expect } from '@playwright/test';
 
 /**
@@ -168,7 +170,8 @@ setup('${name} login', async ({ page }) => {
 /**
  * auth refresh：单独跑 setup 文件刷新 storageState。
  *
- * 实现：spawn \`npx playwright test --config .specmint/playwright.config.ts --project=auth-setup --grep "<name>"\`
+ * 实现：经 spawn-playwright.ts 助手启动 \`playwright test --config <runner> --project=auth-setup --grep "<name>"\`
+ * （优先 createRequire 直连用户项目 CLI，回退 npx；Windows 兼容）
  */
 export async function authRefreshCommand(
   name: string,
@@ -207,14 +210,11 @@ export async function authRefreshCommand(
   });
 
   logger.info(`正在 refresh ${name}...`);
-  const exitCode = await new Promise<number>((resolve) => {
-    const child = spawn(
-      'npx',
-      ['playwright', 'test', '--config', runnerConfigPath, '--project=auth-setup', '--grep', name],
-      { cwd, env, stdio: 'inherit' },
-    );
-    child.on('exit', (code) => resolve(code ?? 1));
-  });
+  const refreshResult = await spawnPlaywrightTest(
+    ['--config', runnerConfigPath, '--project=auth-setup', '--grep', name],
+    { cwd, env },
+  );
+  const exitCode = refreshResult.exitCode;
 
   if (options.json) {
     process.stdout.write(JSON.stringify({ ok: exitCode === 0, exitCode }, null, 2) + '\n');
@@ -223,8 +223,12 @@ export async function authRefreshCommand(
     process.exitCode = ExitCode.TEST_FAILED;
     throw new CliError({
       code: ExitCode.TEST_FAILED,
-      message: `auth refresh ${name} 失败（exit ${exitCode}）`,
-      hint: '检查 setup 文件的登录步骤是否正确',
+      message: refreshResult.signal
+        ? `auth refresh ${name} 被信号 ${refreshResult.signal} 终止`
+        : `auth refresh ${name} 失败（exit ${exitCode}）`,
+      hint: refreshResult.signal
+        ? '子进程被外部信号终止（如 Ctrl+C 或被杀）；非测试断言失败，请重试或检查系统资源'
+        : '检查 setup 文件的登录步骤是否正确',
     });
   }
   logger.info(`✓ storageState 已刷新：${join(cwd, STORAGE_LAYOUT.authStorage, `${name}.json`)}`);

@@ -41,8 +41,8 @@ export interface ReviewConfig {
   /**
    * 裁决人字段的自动回填来源优先级。
    * - `cli`：只用 CLI --reviewer；未传则用 'unknown'（最严格）
-   * - `env`：CLI > $SPECMINT_REVIEWER > $USER > git config user.name
-   * - `git-user`（默认）：CLI > $SPECMINT_REVIEWER > $USER > `git config user.name`
+   * - `env`：CLI > $SPECMINT_REVIEWER > $USER > $USERNAME > $LOGNAME > git config user.name
+   * - `git-user`（默认）：CLI > $SPECMINT_REVIEWER > $USER > $USERNAME > $LOGNAME > `git config user.name`
    */
   reviewerSource: ReviewerSource;
   /**

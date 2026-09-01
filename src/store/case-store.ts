@@ -260,7 +260,7 @@ export class CaseStore {
       if (filter.module && meta.module !== filter.module) continue;
 
       const pomRelative = meta.pageObject.enabled && meta.pageObject.file
-        ? pathRelative(this.cwd, resolve(this.casesDir, meta.pageObject.file))
+        ? pathRelative(this.cwd, resolve(this.casesDir, meta.pageObject.file)).replace(/\\/g, '/')
         : null;
 
       const groupFromName = name.includes('/') ? name.split('/')[0] : null;
@@ -274,8 +274,10 @@ export class CaseStore {
         tags: meta.tags,
         status: meta.stats.lastStatus,
         lastRunAt: meta.stats.lastRunAt,
-        specPath: pathRelative(this.cwd, specFile),
-        metaPath: pathRelative(this.cwd, metaFile),
+        // 统一转正斜杠（与 72/231 行范式一致）：Windows 下 pathRelative 返回反斜杠，
+        // run.ts 单文件 verdict gate 按 specPath 字符串匹配，不归一化会静默失效
+        specPath: pathRelative(this.cwd, specFile).replace(/\\/g, '/'),
+        metaPath: pathRelative(this.cwd, metaFile).replace(/\\/g, '/'),
         pageObjectFile: pomRelative,
         reviewVerdict: meta.review?.verdict,
       });
@@ -675,7 +677,9 @@ function collectSpecFiles(rootDir: string): string[] {
       }
       if (stat.isDirectory()) {
         // 跳过 Page Object 目录与运行产物目录
-        if (entry === 'pages' || entry === 'node_modules' || entry.startsWith('.')) continue;
+        // 大小写不敏感：NTFS 默认大小写不敏感，但用户目录名可能是 Pages / NODE_MODULES
+        const lower = entry.toLowerCase();
+        if (lower === 'pages' || lower === 'node_modules' || entry.startsWith('.')) continue;
         walk(full);
       } else if (stat.isFile() && entry.endsWith('.spec.ts')) {
         out.push(full);

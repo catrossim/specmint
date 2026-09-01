@@ -362,7 +362,7 @@ reviewCmd
       return v as ReviewVerdict;
     },
   )
-  .option('--reviewer <name>', '裁决人，默认从 $SPECMINT_REVIEWER / $USER / git config user.name 推断')
+  .option('--reviewer <name>', '裁决人，默认从 $SPECMINT_REVIEWER / $USER / $USERNAME / git config user.name 推断')
   .option('--note <text>', '备注；传空字符串 --note "" 会清空备注')
   .option('--json', '输出 JSON 格式')
   .action(async (caseName: string, options: Parameters<typeof reviewSetCommand>[1]) => {

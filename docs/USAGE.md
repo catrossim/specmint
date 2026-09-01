@@ -1,6 +1,8 @@
-# specmint 使用文档（v2.1）
+# specmint 使用文档（v2.7）
 
 面向测试工程师的完整使用指南。
+
+> v2.7 增量：Windows 全平台兼容（spawn / 路径 / reviewer / NTFS / 构建脚本 5 处 P0/P2 修复）。详见 [§13 升级指南](#13-升级指南)。
 
 ## 1. 项目布局
 
@@ -621,6 +623,37 @@ specmint generate "<desc>" --url https://example.com/dashboard
 - **行为变化**：未配置 auth 时会多一行 warning（旧版静默）；命中登录页启发式探测（login/signin/oauth/sso/登录/password input）再补一条——都不 fail
 - **缓存自然失效**：旧无指纹缓存视为"未登录态"快照，带登录态的新调用重新抓一次，无需手动清理
 - 端到端演示：[examples/with-auth](../examples/with-auth/)
+
+### v2.6 → v2.7（Windows 全平台兼容）
+
+完全向后兼容，零迁移成本。修复点（按严重度）：
+
+| # | 位置 | 问题 | 修复 |
+|---|------|------|------|
+| P0-1 | `src/runner/executor.ts:186` | `spawn('npx', ...)` 不带 `shell`，Windows 上找不到 `npx.cmd` → `ENOENT` | 统一走 `src/utils/cross-platform.ts:spawnProcess()`，自动加 `shell: true` |
+| P0-2 | `src/commands/auth.ts:211` | 同上，`auth refresh` 在 Windows 必挂 | 同上 |
+| P0-3 | `src/commands/auth.ts:124` | `replace(cwd + '/', '')` 假设正斜杠，Windows 下 `storageRel` 残留为绝对路径并写入 setup.ts 模板 | 改用 `path.relative(cwd, ...).replace(/\\/g, '/')`（与 `case-store.ts:72,231` 同款范式） |
+| P1 | `src/runner/review.ts:437` | `process.env.USER` Windows 上不存在，reviewer 静默退化为 `'unknown'` | 改为 `process.env.USERNAME \|\| process.env.USER` |
+| P2 | `src/store/case-store.ts:678` | `entry === 'pages'` 大小写敏感，NTFS 大小写不敏感的目录名（如 `Pages/`）会被误扫进 POM 扫描 | lower-case 比对 |
+| P2 | `package.json:18` | `build` 脚本裸调 `chmod`，Windows dev/CI 构建即挂 | 移除 chmod（dist 已在 `.gitignore`，无需执行权限位） |
+
+升级步骤：
+
+1. 拉取 v0.5.1：`npm i specmint@0.5.1`
+2. **无需改动业务代码** —— 修复都在 CLI 内部
+3. Windows 用户验证：
+   ```powershell
+   # 之前必挂，现在应通过
+   npx specmint run --priority P0
+   npx specmint auth refresh admin
+   # 确认生成的 .specmint/auth/<role>.setup.ts 中路径是相对且正斜杠
+   ```
+
+兼容性边界：
+
+- 子进程启动走 `src/utils/cross-platform.ts` 的 `spawnProcess()`，全平台一致行为
+- 路径字符串统一用 `path.posix` 归一化（新增 `src/utils/path-display.ts`），setup.ts 模板里出现的路径都是 `relative/forward/slash` 形式
+- 旧版本用户在 Windows 上 `.specmint/auth/<role>.setup.ts` 残留的绝对路径需要手动重跑 `specmint auth init <role>` 重新生成
 
 ---
 

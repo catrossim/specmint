@@ -5,6 +5,8 @@
 
 specmint 是一条端到端的 Web UI 测试流水线：你用一句话描述"在登录页输入正确账号密码、点击登录、跳转到首页"，它会自动生成可维护的 Playwright 测试 + Page Object Module + 中文 spec，并在 `run` 时由 `pi-coding-agent` 引导真实浏览器回放。仲裁关卡、auth 角色管理、产物批次落点都内置齐全。
 
+**全平台支持**（v0.5.1+）：Windows / macOS / Linux 三端行为一致——子进程走 `src/utils/cross-platform.ts` 的 `spawnProcess()`（自动兼容 `npx.cmd` shim / `shell: true`），路径用 `path.posix` 归一化，Windows 上不再出现 `spawn ENOENT`、反斜杠路径污染 setup.ts 等问题。
+
 ---
 
 ## 1. 应用场景
@@ -135,13 +137,13 @@ npx specmint heal <case-name>
 | [**examples/e2e-verify.md**](./examples/e2e-verify.md) | 从零接入真实业务项目的完整 6 步流程（含 CI / FAQ） |
 | [**examples/login-flow.spec.ts**](./examples/login-flow.spec.ts) | 手写用例样例：spec 结构 / 语义定位器 / 用例分组 |
 | [**examples/with-auth/**](./examples/with-auth/) | **v0.5.0 新增**：generate 登录态注入端到端演示（`--auth <role>` 覆盖 / 缓存指纹隔离 / `generation.usedAuth` 审计） |
-| [**CHANGELOG.md**](./CHANGELOG.md) | 版本变更记录（v0.1.0 → v0.5.0） |
+| [**CHANGELOG.md**](./CHANGELOG.md) | 版本变更记录（v0.1.0 → v0.5.1） |
 
 ---
 
 ## 5. 当前状态
 
-- 当前发布版本：**`0.5.0`**（v2.6 增量：generate 登录态注入——`--auth <role>` / `config.auth.storageState` 自动透传 / 缓存指纹隔离 / `generation.usedAuth` 审计；详见 [CHANGELOG](./CHANGELOG.md#050---2026-09-01)）
+- 当前发布版本：**`0.5.1`**（v2.7 增量：Windows 全平台兼容——`spawn('npx')` ENOENT 修复 / 路径归一化 / `process.env.USERNAME` 兜底 / NTFS pages 目录大小写不敏感 / 构建脚本去 chmod；详见 [CHANGELOG](./CHANGELOG.md#051---2026-09-01)）
 - Node：≥ 20
 - 自带依赖：`@earendil-works/pi-coding-agent` ^0.84.0、`commander` ^15.0.0、`typebox` ^1.0.0
 - **Peer 依赖（用户项目自行决定版本）**：`playwright` / `@playwright/test` 必须 ≥ 1.58.0。specmint **不再强制锁定**版本，集成方可在自己的 `package.json` 写任何兼容版本（例如固定 `1.69.0`、`>=1.58.0 <2.0.0` 等）。executor 实际调用的是用户 cwd 的 `npx playwright test`，运行时用的就是接入项目自带的版本。`specmint init` 会检测当前项目里是否已装这两个包，并在 `nextSteps` 给出推荐安装命令。

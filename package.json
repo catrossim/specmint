@@ -1,6 +1,6 @@
 {
   "name": "specmint",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "面向 agent 的 Playwright 页面测试 CLI 工具：自然语言生成用例、可重跑、历史可追溯",
   "type": "module",
   "bin": {
@@ -9,13 +9,12 @@
   "main": "./dist/cli.js",
   "files": [
     "dist",
-    "templates",
     "README.md",
     "CHANGELOG.md",
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc && chmod +x dist/cli.js",
+    "build": "tsc && node -e \"if(process.platform!=='win32')require('node:fs').chmodSync('dist/cli.js',0o755)\"",
     "dev": "tsx src/cli.ts",
     "start": "node dist/cli.js",
     "init": "tsx src/cli.ts init",
