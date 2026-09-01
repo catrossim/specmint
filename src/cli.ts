@@ -136,6 +136,12 @@ program
     {},
   )
   .option(
+    '--auth <role>',
+    '显式指定登录态角色（覆盖 config.auth.storageState）。对应 `.specmint/auth/storage/<role>.json`，' +
+      '文件不存在时会 fail-fast 提示 `specmint auth login --role <name>`。未传则按 ' +
+      'config.auth.storageState > headers/cookies > 未登录态 顺序解析。',
+  )
+  .option(
     '--interactive',
     '在生成前让用户确认 LLM 推断的 module / group。仅单条 + TTY + 未传 --module/--group 时生效。',
   )
@@ -167,10 +173,12 @@ program
   .option('--json', '输出 JSON 格式')
   .action(async (description: string, options: Parameters<typeof generateCommand>[1]) => {
   // commander 把 --set 收集为 options.set,映射到 GenerateOptions.setParams
-  const { set, ...rest } = options as Parameters<typeof generateCommand>[1] & {
+  // commander 把 --auth 收集为 options.auth,映射到 GenerateOptions.authRole
+  const { set, auth, ...rest } = options as Parameters<typeof generateCommand>[1] & {
     set?: Record<string, string>;
+    auth?: string;
   };
-  await generateCommand(description, { ...rest, setParams: set });
+  await generateCommand(description, { ...rest, setParams: set, authRole: auth });
 });
 
 // --- run ---

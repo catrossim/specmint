@@ -174,6 +174,12 @@ export interface AuthCookieSpec {
   expires?: number;
 }
 
+/**
+ * `AutoTestConfig.auth` 段的具名类型，便于在 agent 层（auth-resolve 等）做类型标注。
+ * 字段语义参见 AutoTestConfig.auth 的注释。
+ */
+export type AuthSpec = NonNullable<AutoTestConfig['auth']>;
+
 export const DEFAULT_CONFIG: AutoTestConfig = {
   version: '1',
   agent: {

@@ -89,7 +89,7 @@ npx specmint run --no-auth        # 公开页场景跑测；用例已 approved �
 | 命令 | 用途 |
 |---|---|
 | `init` | 在当前目录生成 `specmint.config.json` + `.specmint/` 目录结构 |
-| `generate <描述>` | 自然语言批量生成用例（逗号分隔多个） |
+| `generate <描述>` | 自然语言批量生成用例（逗号分隔多个）；**v0.5.0+ 支持 `--auth <role>`**，探索阶段自动注入登录态（覆盖 `config.auth.storageState`，多角色用，详见 [examples/with-auth](./examples/with-auth/)） |
 | `run [pattern]` | 跑用例；默认仅跑 `verdict=approved` |
 | `rerun [--from <runId>]` | 重跑最近一次失败用例 |
 | `list [filters]` | 列表展示用例；支持 tag / module / group / priority / auth / require-review 过滤 |
@@ -131,16 +131,17 @@ npx specmint heal <case-name>
 | [**docs/review.md**](./docs/review.md) | 人工裁决状态机 / REPL 翻页 / 脚本裁决 / 运行时卡口 / v0.2.0 行为回滚 |
 | [**docs/element-contract.md**](./docs/element-contract.md) | 探查阶段元素契约（spec / POM 之间必须遵守的命名 / 引用规则） |
 | [**docs/RELEASING.md**](./docs/RELEASING.md) | 维护者发布流程 / 预发布通道 / 开发态常用命令 |
-| [**examples/README.md**](./examples/README.md) | examples 目录约定 + 两种典型场景（从零接入 / 手写用例） |
+| [**examples/README.md**](./examples/README.md) | examples 目录约定 + 三种典型场景（从零接入 / 手写用例 / [with-auth 登录态注入](./examples/with-auth/)） |
 | [**examples/e2e-verify.md**](./examples/e2e-verify.md) | 从零接入真实业务项目的完整 6 步流程（含 CI / FAQ） |
 | [**examples/login-flow.spec.ts**](./examples/login-flow.spec.ts) | 手写用例样例：spec 结构 / 语义定位器 / 用例分组 |
-| [**CHANGELOG.md**](./CHANGELOG.md) | 版本变更记录（v0.1.0 → v0.3.0） |
+| [**examples/with-auth/**](./examples/with-auth/) | **v0.5.0 新增**：generate 登录态注入端到端演示（`--auth <role>` 覆盖 / 缓存指纹隔离 / `generation.usedAuth` 审计） |
+| [**CHANGELOG.md**](./CHANGELOG.md) | 版本变更记录（v0.1.0 → v0.5.0） |
 
 ---
 
 ## 5. 当前状态
 
-- 当前发布版本：**`0.3.0`**（首个公开发版）
+- 当前发布版本：**`0.5.0`**（v2.6 增量：generate 登录态注入——`--auth <role>` / `config.auth.storageState` 自动透传 / 缓存指纹隔离 / `generation.usedAuth` 审计；详见 [CHANGELOG](./CHANGELOG.md#050---2026-09-01)）
 - Node：≥ 20
 - 自带依赖：`@earendil-works/pi-coding-agent` ^0.84.0、`@playwright/test` 1.58.0、`playwright` 1.58.0（**用户业务项目无需单独安装**）
 - License：[MIT](./LICENSE)

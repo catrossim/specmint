@@ -4,8 +4,8 @@ specmint 项目的所有重要变更都会记录在这里。版本号遵循 [Sem
 
 ## 版本说明
 
-- **当前发布版本**：`0.3.0`（内部 v2.5 增量，详见 [0.3.0] 段）
-- 内部迭代以 `v2` / `v2.1` / `v2.2` / `v2.3` / `v2.4` / `v2.5` 标识，本文件作为对外权威变更日志。
+- **当前发布版本**：`0.5.0`（内部 v2.6 增量，详见 [0.5.0] 段）
+- 内部迭代以 `v2` / `v2.1` / `v2.2` / `v2.3` / `v2.4` / `v2.5` / `v2.6` 标识，本文件作为对外权威变更日志。
 - 自 `0.1.0` 起，每个 npm release 都会在此新增一段 `## [x.y.z] - YYYY-MM-DD`。
 
 ---
@@ -199,6 +199,87 @@ npx specmint run --config ./my-playwright.config.ts
 # 强制使用系统 Chrome（跳过 auto 检测）
 # 在 config.json 里设 runner.browserChannel: "chrome"
 ```
+
+---
+
+## [0.5.0] - 2026-09-01
+
+generate 命令登录态注入链路贯通（内部 v2.6 增量）。此前 `generate --url` 在 `explorePage` 阶段根本不向 Playwright 注入任何登录态，需要登录的 URL 拿到的就是未登录 DOM，生成的用例全部基于登录页写出来。本次发布把"配置侧已具备但没接上"的能力补完：CLI `--auth <role>` 显式覆盖 + `config.auth.storageState` 默认走通 + 缓存按登录态隔离 + 落盘审计。
+
+### 新增能力
+
+- **CLI `--auth <role>`**：显式指定登录态角色，覆盖 `config.auth.storageState`。对应 `.specmint/auth/storage/<role>.json`；文件不存在时 fail-fast 提示 `specmint auth login --role <name>`（`src/cli.ts` / `src/agent/auth-resolve.ts`）
+- **Auth 解析器 `resolveAuth`**（`src/agent/auth-resolve.ts`）：合并 `config.auth` + CLI `--auth <role>`，按优先级解析：
+  1. `--auth <role>` → `role: 'cli'`
+  2. `config.auth.storageState` → `role: 'config'`
+  3. `config.auth.headers` / `extraHTTPHeaders` / `cookies` → `role: 'config-inline'`
+  4. 全空 → `role: 'none'`（仅 warning，不 fail）
+
+  `${ENV_VAR}` 占位符在所有路径展开（复用 `config.ts` 的 `expandAuthEnv/Headers/Cookies`）
+- **Playwright 注入**：`ExploreOptions` 扩展 `storageState` / `extraHTTPHeaders` / `cookies`，`browser.newContext()` 时透传；cookies 仅在 storageState 缺失时 `addCookies()` 兜底（避免与 storageState 内嵌 cookies 冲突）
+- **缓存指纹隔离**：`explorePage` 接受 `cache.storageStateFingerprint`，不同登录态 → 不同 cache 文件，避免 admin 抓的 DOM 被 user 角色复用。fingerprint 只 hash 路径/key，**绝不 hash value**
+- **`generation.usedAuth` 审计字段**：每个用例 meta 落盘时记录 `role: 'cli' | 'config' | 'config-inline' | 'none'`、`storageStatePath`、`headerKeys[]`。**不存 token / cookie value**，避免泄露到 git
+- **启发式登录页 warning**（`src/commands/generate-helpers.ts`）：探索结束后，若 `role === 'none'` 且 title/URL 含 login/signin/oauth/sso/登录 或 snapshot 含 `type=password`，打 warning 提示用户跑 `specmint auth login`，**不 fail-fast**
+
+### 配置增量
+
+`.specmint/config.json`：
+
+```jsonc
+{
+  "auth": {
+    // 任选其一，priority: storageState > headers/extraHTTPHeaders > cookies
+    "storageState": ".specmint/auth/storage/admin.json",  // value 支持 ${ENV_VAR}
+    // 或
+    "headers":        { "Authorization": "Bearer ${CI_TOKEN}" },
+    "extraHTTPHeaders": { "X-Tenant": "${TENANT}" },
+    "cookies": [{ "name": "sid", "value": "${SID}", "sameSite": "Lax" }]
+  }
+}
+```
+
+### CLI 增量
+
+```bash
+# 项目级单一身份（最常见）
+specmint generate --url https://app.example.com/dashboard --description "查看订单列表"
+# → 自动用 config.auth.storageState
+
+# 临时切角色（多角色项目）
+specmint generate --url https://app.example.com/admin --auth admin --description "审核订单"
+# → 覆盖 config 默认，用 .specmint/auth/storage/admin.json
+
+# 忘登录了
+specmint generate --url https://app.example.com/dashboard --description "..."
+# → warning: 看起来是登录页，请先跑 specmint auth login
+# → 不 fail，按未登录态生成
+```
+
+### 落盘审计示例
+
+```jsonc
+// .specmint/cases/order-list.spec.json
+{
+  "generation": {
+    "mode": "agent",
+    "model": "anthropic/...",
+    "exploredUrl": "https://app.example.com/dashboard",
+    "selectorPolicy": "testid",
+    "usedAuth": {
+      "role": "config",
+      "storageStatePath": ".specmint/auth/storage/admin.json",
+      "headerKeys": []
+    }
+  }
+}
+```
+
+### 兼容说明
+
+- **完全向后兼容**：未配置 `auth` 段的项目跑 `generate --url` 行为与 v0.4 字节级一致（仅多一行 warning，role=none 时）
+- **缓存击穿风险**：旧无 fingerprint 的 cache 视为"未登录态"快照，新调用拿到 fingerprint 后会重新抓一次；旧缓存自然失效，不需主动清理
+- **新加的 `usedAuth` 字段是 optional**：旧 case 文件 / `manual` 模式落盘不受影响
+- **不在本次范围**：OAuth 流程编排 / token 自动刷新 / Playwright projects 多角色拆分（v2.7+ 议题）
 
 ---
 

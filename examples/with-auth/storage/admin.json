@@ -1,0 +1,27 @@
+{
+  "comment": "examples/with-auth/storage/admin.json —— 预录的 Playwright storageState，仅用于演示 specmint generate --auth 链路。真实项目请运行 `specmint auth login --role admin` 自行生成。",
+
+  "cookies": [
+    {
+      "name": "auth-session",
+      "value": "demo-admin-session-token-7f3c1d",
+      "domain": "localhost",
+      "path": "/",
+      "expires": -1,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "user-role",
+      "value": "admin",
+      "domain": "localhost",
+      "path": "/",
+      "expires": -1,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    }
+  ],
+  "origins": []
+}

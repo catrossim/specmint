@@ -72,7 +72,7 @@ ls ~/.cache/ms-playwright/ 2>/dev/null | grep -E '^chromium-[0-9]+$' && echo "ch
 
 ### 用例库
 
-- `generate [description] -p <priority> [--url] [--page-object] [--model] [--tag] [--name] [--module <m>] [--group <g>] [--concurrency <n>] [--interactive] [--template <name>] [--no-template] [--example] [--no-example] [--set k=v] [--retry] [--retry-backoff <ms>] [--checkpoint] [--no-checkpoint] [--resume] [--no-explore-cache] [--explore-cache-ttl <ms>] [--batch-file <path>]` — **必传** `--priority` (P0|P1|P2|P3)；`--module` / `--group` 强制覆盖 PI 推断；`--no-explore-cache` 强制刷新探索快照；`--template <name>` 命中模板可走零 LLM 快路径；`--resume` 从 `--checkpoint` 恢复；`--batch-file` 从文件按行读 description（每行一条，# 注释跳过）
+- `generate [description] -p <priority> [--url] [--auth <role>] [--page-object] [--model] [--tag] [--name] [--module <m>] [--group <g>] [--concurrency <n>] [--interactive] [--template <name>] [--no-template] [--example] [--no-example] [--set k=v] [--retry] [--retry-backoff <ms>] [--checkpoint] [--no-checkpoint] [--resume] [--no-explore-cache] [--explore-cache-ttl <ms>] [--batch-file <path>]` — **必传** `--priority` (P0|P1|P2|P3)；`--module` / `--group` 强制覆盖 PI 推断；**v0.5.0+ `--auth <role>` 探索阶段注入登录态**（覆盖 `config.auth.storageState`，多角色用，role 文件不存在 fail-fast 提示 `auth login`）；`--no-explore-cache` 强制刷新探索快照；`--template <name>` 命中模板可走零 LLM 快路径；`--resume` 从 `--checkpoint` 恢复；`--batch-file` 从文件按行读 description（每行一条，# 注释跳过）
 
 #### 批量输入语义（v0.4+）
 
@@ -134,6 +134,9 @@ specmint generate "登录失败提示" --priority P1 --module 用户认证 --gro
 
 # 4c. 强制刷新探索快照（v0.2.0+ 起支持 --no-explore-cache）
 specmint generate "..." --url https://example.com/login --no-explore-cache
+
+# 4d. 需登录页面注入登录态（v0.5.0+，--auth 覆盖 config.auth.storageState）
+specmint generate "管理员查看订单 Dashboard" --url https://example.com/dashboard --auth admin --priority P1
 
 # 5. 列用例
 specmint list --priority P0
@@ -213,7 +216,7 @@ Playwright 默认值
 
 `generate --url` 默认会复用 `.specmint/cache/explore/<hash>.json` 的 a11y 快照：
 
-- **key** = `sha256(URL + storageState 文件指纹)`，相同 (URL, 角色) 直接复用
+- **key** = `sha256(URL + 探索参数 + storageStateFingerprint)`。v0.5.0 起登录态以指纹参与 key（storageState 路径或 headers/cookies 的 key 名 hash，**不 hash value**），相同 (URL, 登录态) 直接复用，换角色自动失效重抓
 - **TTL** 默认 600000ms（10 分钟），过期或 storageState 变会自动失效
 - **关闭方式**：`explore.cache.enabled = false` 全局关；`--no-explore-cache` 单次关；`rm -rf .specmint/cache/explore/` 手动清空
 
@@ -312,7 +315,7 @@ YYYY-MM-DD_HHMMSS[-<slug>]
 1. **首次必跑 `models select`** — 选定 LLM provider / model
 2. **`generate` 必传 `--priority`** — 避免 LLM 自由发挥污染冒烟集
 3. **`generate` 可加 `--url` 探索页面**，提高定位准确度
-4. **登录用例用 auth 子系统** — setup 文件 + storageState 复用，不重复登录
+4. **登录用例用 auth 子系统** — setup 文件 + storageState 复用，不重复登录；**v0.5.0+ generate 需登录页面时配 `--auth <role>`**（或 config.auth.storageState），否则探索拿到的是登录页 DOM，生成的用例必错。探测到登录页时 specmint 只 warning 不 fail，agent 应主动引导补登录态后重跑
 5. **CI 用 env 注入凭据** — `${AUTH_TOKEN}` 比硬编码安全
 6. **`--json` 输出便于 agent 解析**
 7. **`rerun` 一键重跑**失败用例

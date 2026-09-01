@@ -1,0 +1,13 @@
+{
+  "comment": "examples/with-auth/.specmint-config.example.json —— v2.6 起 generate --url 会自动注入 storageState。复制到 .specmint/config.json（按需修改路径）后即可生效。",
+  "auth": {
+    "storageState": "examples/with-auth/storage/admin.json"
+  },
+  "explore": {
+    "headless": true,
+    "timeoutMs": 30000
+  },
+  "generation": {
+    "selectorPolicy": "testid"
+  }
+}

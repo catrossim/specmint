@@ -48,7 +48,19 @@ npx specmint generate "登录成功" --priority P0
 specmint generate "完整购买流程" --url https://staging.example.com --priority P1
 ```
 
-v0.2.0+ 还会把 `(URL, storageState) → a11y 快照` 落盘到 `.specmint/cache/explore/`，TTL 默认 10 分钟；同 URL 反复生成时直接复用，强制刷新用 `--no-explore-cache`。
+v0.2.0+ 还会把 `(URL, 登录态) → a11y 快照` 落盘到 `.specmint/cache/explore/`，TTL 默认 10 分钟；同 URL 反复生成时直接复用，强制刷新用 `--no-explore-cache`。v0.5.0 起登录态以**指纹**（storageState 路径或 headers/cookies 的 key 名 hash，不 hash value）参与缓存 key——同 URL 换角色自动失效重抓，admin 抓的快照不会被 viewer 误用。
+
+**`--auth <role>` 登录态注入**（v0.5.0+，需登录的页面必看）：
+
+```bash
+# 需登录页面：不注入登录态时探索拿到的是登录页 DOM，生成的用例必错
+specmint generate "管理员查看订单 Dashboard" \
+  --url https://staging.example.com/dashboard \
+  --auth admin \
+  --priority P1
+```
+
+优先级：CLI `--auth <role>` > `config.auth.storageState` > headers/cookies > 未登录态（warning 但不 fail）。端到端演示见 [`examples/with-auth/`](./with-auth/)。
 
 ### 批量生成（推荐用法）
 

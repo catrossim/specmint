@@ -24,6 +24,8 @@ import { createCaseTools, CASE_TOOL_NAMES } from '../agent/tools.js';
 import { buildGeneratePrompt } from '../agent/prompts.js';
 import { loadContract, renderContractSection } from '../contract.js';
 import { explorePage, type ExploreResult } from '../agent/explore.js';
+import { resolveAuth, toCaseUsedAuth, type ResolvedAuth } from '../agent/auth-resolve.js';
+import { looksLikeLoginPage } from './generate-helpers.js';
 import { PRIORITIES, type Priority } from '../store/types.js';
 import { normalizeGroup, normalizeModule } from '../utils/normalize-meta.js';
 import { createLimit, type Limit } from '../utils/concurrency.js';
@@ -139,6 +141,12 @@ export interface GenerateOptions {
    * 优先级高于 <description> 与 stdin。按行切分，跳过空行与 `#` 注释。
    */
   batchFile?: string;
+  /**
+   * 显式指定 auth 角色（来自 CLI `--auth <role>`）。
+   * 优先级最高，覆盖 config.auth.storageState；role 文件不存在时 fail-fast。
+   * 未传则按 storageState > headers/extraHTTPHeaders > cookies > none 顺序解析 config.auth。
+   */
+  authRole?: string;
 }
 
 export interface GenerateSavedCase {
@@ -189,6 +197,12 @@ export interface BatchContext {
   /** Checkpoint state + 目录。批量模式下用于增量持久化与 --resume 恢复。 */
   state?: BatchState | undefined;
   checkpointDir?: string | undefined;
+  /**
+   * 解析后的登录态上下文（一次性 resolve，结果给 explore 透传 + 审计落盘共用）。
+   * 注意：`storageState` / `extraHTTPHeaders` 透传给 `explorePage`，
+   * `usedAuth`（脱敏版：role + 路径 + key 名）落到 `generation.usedAuth`。
+   */
+  resolvedAuth: ResolvedAuth;
 }
 
 export async function generateCommand(
@@ -291,6 +305,19 @@ export async function generateCommand(
     );
   }
 
+  // 解析登录态上下文（一次性，结果给 explore 透传 + 审计落盘共用）。
+  // 抛错（如 storageState 文件不存在）会沿 CliError 通道上抛，CLI 负责友好提示。
+  const resolvedAuth = resolveAuth(config.auth, options.authRole, cwd);
+  if (resolvedAuth.role === 'none') {
+    logger.warn(
+      '[auth] 未配置登录态：未设置 config.auth 且未传 --auth <role>。若目标 URL 需要登录，' +
+        '请运行 `specmint auth login --role <name>` 并在 config 中配置 auth.storageState，' +
+        '或本次加 --auth <role> 覆盖。',
+    );
+  } else {
+    logger.info(`[auth] 使用登录态: role=${resolvedAuth.role}` + (resolvedAuth.storageStatePath ? ` storageState=${resolvedAuth.storageStatePath}` : ''));
+  }
+
   // 共享上下文：explore 结果按 URL 复用
   const ctx: BatchContext = {
     cwd,
@@ -301,6 +328,7 @@ export async function generateCommand(
     group,
     priority,
     exploreByUrl: new Map(),
+    resolvedAuth,
   };
 
   // === 单条路径：完全沿用旧行为，避免破坏既有 JSON 输出契约与 CLI 输出风格 ===
@@ -566,7 +594,16 @@ async function runExploreForUrl(
     timeoutMs: config.explore.timeoutMs,
     maxElements: config.explore.maxElements,
     waitUntil: config.explore.waitUntil,
-    cache: { enabled: cacheEnabled, dir: cacheDir, ttlMs: cacheTtl },
+    cache: {
+      enabled: cacheEnabled,
+      dir: cacheDir,
+      ttlMs: cacheTtl,
+      // 不同登录态 → 不同 cache 文件，避免互相污染。
+      storageStateFingerprint: ctx.resolvedAuth.fingerprint,
+    },
+    storageState: ctx.resolvedAuth.storageState,
+    extraHTTPHeaders: ctx.resolvedAuth.extraHTTPHeaders,
+    cookies: ctx.resolvedAuth.cookies,
   });
   const cacheTag = result.fromCache
     ? ' [cache hit]'
@@ -574,6 +611,20 @@ async function runExploreForUrl(
       ? ' [cached]'
       : '';
   logger.info(`探索完成: title="${result.title}" (${result.durationMs}ms)${cacheTag}`);
+
+  // 启发式探测：探索完后如果看起来是登录页 + auth 全空，再 warn 一次（不 fail）。
+  // 上面 generateCommand 已经打过一次 warning，这里聚焦"URL 真的命中了登录页"场景。
+  if (
+    ctx.resolvedAuth.role === 'none' &&
+    looksLikeLoginPage(result.title, result.url, result.accessibilitySnapshot, result.interactiveElements)
+  ) {
+    logger.warn(
+      `[auth] 探索结果看起来是登录页（title/url 含 login/signin/oauth/sso 或 password input），` +
+        `且本次未注入登录态。生成的用例将基于未登录态页面。` +
+        `建议: specmint auth login --role <name> 后重跑。`,
+    );
+  }
+
   ctx.exploreByUrl.set(url, result);
   return result;
 }
@@ -623,6 +674,8 @@ function saveFromTemplate(
         model: `template:${fast.templateName}`,
         exploredUrl: exploreResult?.url ?? null,
         selectorPolicy: ctx.config.generation.selectorPolicy,
+        // 审计字段：仅落 role/路径/key，不落 token/cookie 值
+        usedAuth: toCaseUsedAuth(ctx.resolvedAuth),
       },
     },
     fast.render.code,
@@ -729,6 +782,8 @@ async function runSingleCase(
         model: ctx.config.agent.model,
         exploredUrl: exploreResult?.url ?? null,
         selectorPolicy: ctx.config.generation.selectorPolicy,
+        // 审计字段：仅落 role/路径/key，不落 token/cookie 值
+        usedAuth: toCaseUsedAuth(ctx.resolvedAuth),
       },
       defaultSourceInput: description,
       defaultSourceType: 'generated',

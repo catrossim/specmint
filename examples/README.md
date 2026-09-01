@@ -10,6 +10,10 @@
 
 参考 [`login-flow.spec.ts`](./login-flow.spec.ts) 的手写样例——演示 spec 文件结构、POM 用法、用例分组（`group/name.spec.ts`）。
 
+## 场景 3：generate 登录态注入（v0.5.0+）
+
+参见 [`with-auth/`](./with-auth/)：演示 `specmint generate --url <需登录>` 时如何注入 storageState、多角色 `--auth <role>` 覆盖、启发式登录页 warning、缓存指纹隔离与 `generation.usedAuth` 审计字段。
+
 ## 目录约定
 
 ```

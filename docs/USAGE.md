@@ -104,10 +104,10 @@ my-project/
 | `runner.timeoutMs` | 否 | 单用例超时（毫秒），默认 `30000` |
 | `runner.browserChannel` | 否 | `auto`（默认，chromium→chrome→msedge 自动回退）/ `chromium` / `chrome` / `msedge` —— 解决内网无法下载 chromium |
 | `runner.baseURL` | 否 | 被测目标 baseURL，注入到 Playwright `use.baseURL`。支持 `${ENV_VAR}` 展开。env 优先于本字段（`BASE_URL` / `SPECMINT_BASE_URL` > `runner.baseURL` > `http://localhost:3000`） |
-| `auth.headers` | 否 | 注入到 Playwright `extraHTTPHeaders` |
+| `auth.headers` | 否 | 注入到 Playwright `extraHTTPHeaders`（v0.5.0 起 `generate` 探索阶段同样生效） |
 | `auth.extraHTTPHeaders` | 否 | 同 `headers`，两者合并 |
-| `auth.cookies` | 否 | cookie 列表（schema 预留，阶段 2 完整支持） |
-| `auth.storageState` | 否 | Playwright `storageState` 路径 |
+| `auth.cookies` | 否 | cookie 列表（v0.5.0 起 `generate` 探索阶段作为最弱兜底注入，仅在无 storageState 时生效） |
+| `auth.storageState` | 否 | Playwright `storageState` 路径。**v0.5.0 起 `generate --url` 探索阶段自动注入**（优先级：CLI `--auth <role>` > 本字段 > headers/cookies > 未登录态+warning）；value 支持 `${ENV_VAR}` 展开 |
 | `explore.cache.enabled` | 否 | 是否启用探索快照缓存，默认 `true` |
 | `explore.cache.ttlMs` | 否 | 快照有效期（毫秒），默认 `600000`（10 分钟） |
 | `explore.cache.dir` | 否 | 缓存目录，相对 `.specmint/` 解析 |
@@ -199,6 +199,8 @@ specmint generate "<desc>" --priority P0
 specmint generate "<desc>" --priority P1 --url https://example.com --page-object
 specmint generate "<desc>" --priority P0 --module 用户认证 --group auth
 specmint generate "<desc>" --priority P0 --no-explore-cache   # 强制刷新探索快照
+# v0.5.0 登录态注入：--auth <role> 覆盖 config.auth.storageState（多角色用）
+specmint generate "<desc>" --priority P0 --url https://example.com/dashboard --auth admin
 
 # 列表（v2.1 增加 --module / --group）
 specmint list [--tag X] [--priority P0,P1] [--auth admin]
@@ -390,14 +392,17 @@ v2.1 把 `(URL + storageState)` 的快照落盘到 `.specmint/cache/explore/`，
 
 ### 命中判定
 
-缓存 key = `sha256(URL + storageState)`（按文件指纹 / mtime 计算），相同 (URL, 角色) 才命中：
+缓存 key = `sha256(URL + 探索参数 + storageStateFingerprint)`。v0.5.0 起登录态参与 key 的方式升级为**指纹**（`storageStateFingerprint`）：由 storageState 路径或 headers/cookies 的 key 名 hash 而来（**绝不 hash value**，避免 secret 泄露到缓存 key）。相同 (URL, 登录态指纹) 才命中：
 
 ```
 URL: https://example.com/login  +  storageState: .specmint/auth/storage/admin.json
+  → fingerprint: 3f2a9c1e
   → cache/explore/<hash>.json
+
+同 URL 换角色（--auth viewer）→ fingerprint 不同 → 缓存自动失效重抓
 ```
 
-storageState 变化（例如切换 `auth/admin` → `auth/anonymous`）会自动失效。
+storageState 切换（例如 `--auth admin` → `--auth viewer`）会自动失效。v0.5.0 之前的旧缓存（无指纹）视为"未登录态"快照，带登录态的新调用会重新抓一次，无需手动清理。
 
 ### 何时该强制刷新
 
@@ -554,6 +559,24 @@ specmint generate "登录失败提示" --priority P1 --group auth --module 用�
 
 `explore.cache.ttlMs` 默认 600000ms（10 分钟）。过期或 storageState 改变都会自动重建。
 
+### Q：generate 时 URL 需要登录态怎么办（v0.5.0+）？
+
+三种方式，优先级从高到低：
+
+```bash
+# 1. CLI 显式覆盖（多角色推荐）
+specmint generate "<desc>" --url https://example.com/dashboard --auth admin
+
+# 2. config 默认（项目级单一身份）
+# .specmint/config.json: { "auth": { "storageState": ".specmint/auth/storage/admin.json" } }
+specmint generate "<desc>" --url https://example.com/dashboard
+
+# 3. token 头兜底（CI 场景，value 支持 ${ENV_VAR}）
+# { "auth": { "headers": { "Authorization": "Bearer ${CI_TOKEN}" } } }
+```
+
+都没配时不会 fail：先打一条 warning，探索完成后若命中启发式登录页探测（title/URL 含 login/signin/oauth/sso/登录，或快照含 `type=password`）再补一条 warning，照常按未登录态生成。端到端演示见 [examples/with-auth](../examples/with-auth/)。
+
 ### Q：能关掉探索快照缓存吗？
 
 - 配置：`explore.cache.enabled = false`
@@ -589,6 +612,15 @@ specmint generate "登录失败提示" --priority P1 --group auth --module 用�
 2. **用户项目**的 `playwright.config.ts`（在 `.specmint/` 下）会被 `init` 重新生成；如已自改，请手动加入 `outputDir: process.env.SPECMINT_OUTPUT_DIR ?? './test-results'` 与 `outputFile: process.env.SPECMINT_JSON_OUTPUT_FILE`
 3. 如果之前项目根有遗留的 `test-results/` / `playwright-report/`，手动 `rm -rf` 清理一次即可
 4. 旧的 `.specmint/reports/runs/<ISO 时间戳>/` 目录仍然可用（路径格式升级为 `YYYY-MM-DD_HHMMSS` 但目录布局兼容）
+
+### v2.5 → v2.6（generate 登录态注入）
+
+完全向后兼容，零迁移成本。`generate --url` 探索阶段现在会真正向 Playwright 注入登录态（此前需登录的 URL 拿到的是未登录 DOM）：
+
+- **新能力**：CLI `--auth <role>` 显式覆盖 / `config.auth.storageState` 默认透传 / headers/cookies 兜底 / `generation.usedAuth` 审计字段（仅存 role/路径/key，token 不落盘）
+- **行为变化**：未配置 auth 时会多一行 warning（旧版静默）；命中登录页启发式探测（login/signin/oauth/sso/登录/password input）再补一条——都不 fail
+- **缓存自然失效**：旧无指纹缓存视为"未登录态"快照，带登录态的新调用重新抓一次，无需手动清理
+- 端到端演示：[examples/with-auth](../examples/with-auth/)
 
 ---
 

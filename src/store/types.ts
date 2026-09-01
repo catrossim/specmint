@@ -49,6 +49,26 @@ export interface CaseGeneration {
   /** 仅在 explore-assisted 模式下有值 */
   exploredUrl: string | null;
   selectorPolicy: SelectorPolicy;
+  /**
+   * 生成时实际注入的登录态上下文（仅 explore-assisted 模式有意义）。
+   * **只存 role/路径/key，不存实际 token/cookie 值**，避免敏感信息落盘。
+   * 详见 CaseUsedAuth。
+   */
+  usedAuth?: CaseUsedAuth;
+}
+
+/**
+ * 记录"这条用例生成时用了哪种登录态"，便于回放/审计/分享时知道身份上下文。
+ *
+ * - `role`：`'cli'`（CLI `--auth <role>` 显式指定）/ `'config'`（config.auth.storageState） /
+ *   `'config-inline'`（headers/cookies 兜底）/ `'none'`（未登录态跑过）
+ * - `storageStatePath`：相对 cwd 的 storageState 文件路径（仅 role 为 cli/config 时存在）
+ * - `headerKeys`：注入的 extraHTTPHeaders 的 key 列表（值不落盘）
+ */
+export interface CaseUsedAuth {
+  role: 'cli' | 'config' | 'config-inline' | 'none';
+  storageStatePath?: string;
+  headerKeys?: string[];
 }
 
 export interface CaseSource {

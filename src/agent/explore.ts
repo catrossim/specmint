@@ -42,6 +42,23 @@ export interface ExploreOptions {
     ttlMs?: number;
     storageStateFingerprint?: string;
   };
+  /**
+   * Playwright `storageState` 路径（绝对或相对 cwd）。
+   * 通常由 `specmint auth login --role <role>` 产出，未设置则保持未登录态。
+   * 注：Playwright 的 storageState 包含 cookies + localStorage，覆盖力比单传 headers 更强。
+   */
+  storageState?: string;
+  /**
+   * Playwright `extraHTTPHeaders`。CI token / API key 兜底通道；
+   * 与 `storageState` 同时存在时优先 `storageState`（由调用方在 `resolveAuth` 阶段排好）。
+   */
+  extraHTTPHeaders?: Record<string, string>;
+  /**
+   * Playwright cookies（与 storageState 三选一的最弱兜底）。
+   * 注意：Playwright `newContext()` 不接受 cookies 参数，必须在 context 创建后调用 `context.addCookies()`。
+   * 因此这里仅在 `storageState` 未设置时生效（重复注入会被 Playwright 拒绝）。
+   */
+  cookies?: import('../config.js').AuthCookieSpec[];
 }
 
 export interface ExploreResult {
@@ -97,7 +114,16 @@ export async function explorePage(options: ExploreOptions): Promise<ExploreResul
   });
 
   try {
-    const context = await browser.newContext();
+    // storageState / extraHTTPHeaders / cookies 由调用方（generate.resolveAuth）按优先级解析后传入；
+    // 这里只负责透传给 Playwright，不再二次判断——避免双重策略漂移。
+    const contextOptions: Parameters<typeof browser.newContext>[0] = {};
+    if (options.storageState) contextOptions.storageState = options.storageState;
+    if (options.extraHTTPHeaders) contextOptions.extraHTTPHeaders = options.extraHTTPHeaders;
+    const context = await browser.newContext(contextOptions);
+    // cookies 仅在没有 storageState 时注入（Playwright 拒绝重复设置）。
+    if (!options.storageState && options.cookies && options.cookies.length > 0) {
+      await context.addCookies(options.cookies);
+    }
     const page: Page = await context.newPage();
     page.setDefaultTimeout(timeoutMs);
 

@@ -32,6 +32,7 @@ import type {
   CaseMeta,
   CaseStatus,
   CaseSummary,
+  CaseUsedAuth,
   CaseWithCode,
   Priority,
   ReviewState,
@@ -117,6 +118,12 @@ export interface CaseSaveInput {
     model?: string;
     exploredUrl: string | null;
     selectorPolicy: SelectorPolicy;
+    /**
+     * 生成时实际使用的登录态上下文（脱敏版：仅 role/路径/key 名）。
+     * 详见 CaseUsedAuth。生成路径（save_case 工具 / 模板快路径）会写入；
+     * 手动 import 路径不会写——保持 optional 兼容历史 case。
+     */
+    usedAuth?: CaseUsedAuth;
   };
   pageObject?: {
     enabled: boolean;

@@ -62,7 +62,7 @@ ls ~/.cache/ms-playwright/ 2>/dev/null | grep -E '^chromium-[0-9]+$' && echo "ch
 
 ### 用例库
 
-- `generate [description] -p <priority> [--url] [--page-object] [--model] [--tag] [--name] [--module <m>] [--group <g>] [--concurrency <n>] [--interactive] [--template <name>] [--no-template] [--example] [--no-example] [--set k=v] [--retry] [--retry-backoff <ms>] [--checkpoint] [--no-checkpoint] [--resume] [--no-explore-cache] [--explore-cache-ttl <ms>] [--batch-file <path>]` — **必传** `--priority` (P0|P1|P2|P3)；`--module` / `--group` 强制覆盖 PI 推断；`--no-explore-cache` 强制刷新探索快照；`--template <name>` 命中模板可走零 LLM 快路径；`--resume` 从 `--checkpoint` 恢复；`--batch-file` 从文件按行读 description（每行一条，# 注释跳过）
+- `generate [description] -p <priority> [--url] [--auth <role>] [--page-object] [--model] [--tag] [--name] [--module <m>] [--group <g>] [--concurrency <n>] [--interactive] [--template <name>] [--no-template] [--example] [--no-example] [--set k=v] [--retry] [--retry-backoff <ms>] [--checkpoint] [--no-checkpoint] [--resume] [--no-explore-cache] [--explore-cache-ttl <ms>] [--batch-file <path>]` — **必传** `--priority` (P0|P1|P2|P3)；`--module` / `--group` 强制覆盖 PI 推断；**v0.5.0+ `--auth <role>` 探索阶段注入登录态**（覆盖 `config.auth.storageState`，多角色用，role 文件不存在 fail-fast 提示 `auth login`）；`--no-explore-cache` 强制刷新探索快照；`--template <name>` 命中模板可走零 LLM 快路径；`--resume` 从 `--checkpoint` 恢复；`--batch-file` 从文件按行读 description（每行一条，# 注释跳过）
 
 #### 批量输入语义（v0.4+）
 
@@ -203,7 +203,7 @@ Playwright 默认值
 
 `generate --url` 默认会复用 `.specmint/cache/explore/<hash>.json` 的 a11y 快照：
 
-- **key** = `sha256(URL + storageState 文件指纹)`，相同 (URL, 角色) 直接复用
+- **key** = `sha256(URL + 探索参数 + storageStateFingerprint)`。v0.5.0 起登录态以指纹参与 key（storageState 路径或 headers/cookies 的 key 名 hash，**不 hash value**），相同 (URL, 登录态) 直接复用，换角色自动失效重抓
 - **TTL** 默认 600000ms（10 分钟），过期或 storageState 变会自动失效
 - **关闭方式**：`explore.cache.enabled = false` 全局关；`--no-explore-cache` 单次关；`rm -rf .specmint/cache/explore/` 手动清空
 

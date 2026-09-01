@@ -1,0 +1,27 @@
+{
+  "comment": "examples/with-auth/storage/viewer.json —— 预录的 Playwright storageState，演示 --auth <role 多角色。viewer 角色看到的订单范围（按 user-role 决定）与 admin 不同 → 隔离 fingerprint → 不同缓存文件。",
+
+  "cookies": [
+    {
+      "name": "auth-session",
+      "value": "demo-viewer-session-token-9a2e4b",
+      "domain": "localhost",
+      "path": "/",
+      "expires": -1,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "user-role",
+      "value": "viewer",
+      "domain": "localhost",
+      "path": "/",
+      "expires": -1,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    }
+  ],
+  "origins": []
+}
