@@ -29,13 +29,25 @@
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "^0.84.0",
-    "@playwright/test": "1.58.0",
     "commander": "^15.0.0",
-    "playwright": "1.58.0",
     "typebox": "^1.0.0"
   },
+  "peerDependencies": {
+    "@playwright/test": ">=1.58.0",
+    "playwright": ">=1.58.0"
+  },
+  "peerDependenciesMeta": {
+    "@playwright/test": {
+      "optional": false
+    },
+    "playwright": {
+      "optional": false
+    }
+  },
   "devDependencies": {
+    "@playwright/test": "1.58.0",
     "@types/node": "^22.0.0",
+    "playwright": "1.58.0",
     "tsx": "^4.23.0",
     "typescript": "^7.0.0"
   },

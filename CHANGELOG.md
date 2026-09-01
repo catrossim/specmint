@@ -202,6 +202,42 @@ npx specmint run --config ./my-playwright.config.ts
 
 ---
 
+## [Unreleased] - TBD
+
+playwright 依赖约束从 `dependencies` 收紧的精确版本 1.58.0 改为 `peerDependencies` 的开放范围（>=1.58.0）。**各接入项目可自行决定** playwright / @playwright/test 的具体版本（如 `1.69.0`、`^1.58.0`、内网镜像版本等），specmint 不再强制 hover 一份 1.58.0 进去。
+
+### 动机
+
+- specmint 包内对 `@playwright/test` 仅 `import type`（`src/runner/playwright.config.ts` / `reporter.ts`），运行时一律走用户 cwd 的 `npx playwright test`（`src/runner/executor.ts`）。**实际生效的就是接入项目自己安装的版本**——specmint 一侧根本没必要锁
+- 之前的 `dependencies: "playwright": "1.58.0"` 精确锁定会让装了更高版本 playwright 的接入项目被 npm `dedupe` / `peer` 冲突伤到，常见表现是锁了一两份或强制 fallback
+- 接入方在 CI / 内网镜像 / 公司统一前端基建下经常需要固定特定版本，硬锁定是阻碍
+
+### 关键改动
+
+- `package.json`
+  - `dependencies` 中移除 `playwright` 与 `@playwright/test`
+  - 新增 `peerDependencies`：`"playwright": ">=1.58.0"`、`"@playwright/test": ">=1.58.0"`，二者 `peerDependenciesMeta.optional: false`（npm v7+ 默认会装）
+  - `devDependencies` 保留 `playwright@1.58.0` 与 `@playwright/test@1.58.0`，用于 specmint 自身的开发 / `tsc --noEmit` 类型校验
+- `src/commands/init.ts`
+  - 新增 `probePlaywright(cwd)`：用 `createRequire(cwd/package.json)` 从用户项目解析 `playwright` 与 `@playwright/test/package.json`，避免误读到 specmint 自带的 devDependency
+  - `InitResult` 新增 `playwright` 字段（`{ "@playwright/test": string|null, playwright: string|null }`），CICD / 集成测试可据此判断下一步是否需要 `npm install`
+  - `nextSteps` 第 2 步依据探测结果动态生成：
+    - 都没装：`npm install -D playwright @playwright/test` + blocker 警示
+    - 只缺一个：补齐明确版本号
+    - 都装好：打印已检测到的版本（便于排错）
+  - 完全没装时打印 `⚠ 未检测到 playwright / @playwright/test`，避免 run/generate 阶段才报"找不到模块"
+- `README.md`
+  - 「当前状态」段删除"`playwright` 1.58.0（用户业务项目无需单独安装）」措辞
+  - 改为明确列出 `peerDependencies` 政策：用户自定版本、`specmint init` 检测、executor 走 `npx playwright test`
+
+### 向后兼容
+
+- **当前已安装 specmint 的项目不受影响**：之前的 1.58.0 已经躺在 `node_modules` 里，新版 specmint 不会再拖一份，对应的 `npx playwright test` 解析依旧命中已存在的版本
+- **如果接入方清掉 lockfile 重装**：peer 缺失会触发 npm v7+ 自动安装（"需要安装 peerDep"），初次 init 后用户可改 package.json 调整到自家偏好的版本
+- **强制最低版本约束** `>=1.58.0`：specmint 0.5.0 之前的所有内部实现都基于该版本 API；低于 1.58.0 的接入项目升级 specmint 时需先升 playwright
+
+---
+
 ## [0.5.0] - 2026-09-01
 
 generate 命令登录态注入链路贯通（内部 v2.6 增量）。此前 `generate --url` 在 `explorePage` 阶段根本不向 Playwright 注入任何登录态，需要登录的 URL 拿到的就是未登录 DOM，生成的用例全部基于登录页写出来。本次发布把"配置侧已具备但没接上"的能力补完：CLI `--auth <role>` 显式覆盖 + `config.auth.storageState` 默认走通 + 缓存按登录态隔离 + 落盘审计。

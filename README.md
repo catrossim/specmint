@@ -143,5 +143,6 @@ npx specmint heal <case-name>
 
 - 当前发布版本：**`0.5.0`**（v2.6 增量：generate 登录态注入——`--auth <role>` / `config.auth.storageState` 自动透传 / 缓存指纹隔离 / `generation.usedAuth` 审计；详见 [CHANGELOG](./CHANGELOG.md#050---2026-09-01)）
 - Node：≥ 20
-- 自带依赖：`@earendil-works/pi-coding-agent` ^0.84.0、`@playwright/test` 1.58.0、`playwright` 1.58.0（**用户业务项目无需单独安装**）
+- 自带依赖：`@earendil-works/pi-coding-agent` ^0.84.0、`commander` ^15.0.0、`typebox` ^1.0.0
+- **Peer 依赖（用户项目自行决定版本）**：`playwright` / `@playwright/test` 必须 ≥ 1.58.0。specmint **不再强制锁定**版本，集成方可在自己的 `package.json` 写任何兼容版本（例如固定 `1.69.0`、`>=1.58.0 <2.0.0` 等）。executor 实际调用的是用户 cwd 的 `npx playwright test`，运行时用的就是接入项目自带的版本。`specmint init` 会检测当前项目里是否已装这两个包，并在 `nextSteps` 给出推荐安装命令。
 - License：[MIT](./LICENSE)

@@ -18,6 +18,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { createRequire } from 'node:module';
 import { logger } from '../utils/logger.js';
 import { STORAGE_LAYOUT } from '../config.js';
 import { CliError, ExitCode } from '../utils/errors.js';
@@ -119,6 +120,15 @@ export interface InitResult {
   updatedGitignore: boolean;
   /** 历史遗留文件列表（提示用户可手动删除，不影响运行） */
   legacyFiles: string[];
+  /**
+   * 用户项目里 playwright 依赖探测结果（peer 模式必需）
+   * - key 为包名；值为检测到的版本，未装为 null
+   * - 调用方（CICD / 集成测试）可据此判断是否需要先 `npm install playwright ...`
+   */
+  playwright: {
+    '@playwright/test': string | null;
+    playwright: string | null;
+  };
   nextSteps: string[];
 }
 
@@ -166,6 +176,45 @@ function ensureGitignore(cwd: string): boolean {
   return true;
 }
 
+/**
+ * 检测用户项目里是否已安装 playwright / @playwright/test
+ *
+ * 设计目的：
+ * - specmint 是 peerDependencies 模式，自身不拖 playwright 进来；
+ * - 用户必须自行决定版本；若检测不到，nextSteps 里给出明确命令
+ * - 区分两种状态：未装 / 已装；已装时给出具体版本（便于排错"我用的哪个 playwright"）
+ *
+ * 用 createRequire(cwd 解析 require) 而不是顶层 require，确保从用户的 cwd 查找，
+ * 避免误读到 specmint 包内的依赖（devDependencies 锁定 1.58.0）。
+ */
+type PlaywrightProbe = {
+  test: boolean;
+  core: boolean;
+  testVersion: string | null;
+  coreVersion: string | null;
+};
+
+function probePlaywright(cwd: string): PlaywrightProbe {
+  const requireFromCwd = createRequire(join(cwd, 'package.json'));
+  const probe = (pkg: 'playwright' | '@playwright/test'): { installed: boolean; version: string | null } => {
+    try {
+      const resolved = requireFromCwd.resolve(`${pkg}/package.json`);
+      const pkgJson = JSON.parse(readFileSync(resolved, 'utf-8')) as { version?: string };
+      return { installed: true, version: pkgJson.version ?? null };
+    } catch {
+      return { installed: false, version: null };
+    }
+  };
+  const testPkg = probe('@playwright/test');
+  const corePkg = probe('playwright');
+  return {
+    test: testPkg.installed,
+    core: corePkg.installed,
+    testVersion: testPkg.version,
+    coreVersion: corePkg.version,
+  };
+}
+
 export async function initCommand(options: InitOptions): Promise<void> {
   const cwd = process.cwd();
   logger.info(`在 ${cwd} 初始化 specmint 项目...`);
@@ -186,9 +235,24 @@ export async function initCommand(options: InitOptions): Promise<void> {
 
   const legacyFiles = detectLegacyFiles(cwd);
   const updatedGitignore = ensureGitignore(cwd);
+  const playwrightProbe = probePlaywright(cwd);
+
+  const playwrightHint = (() => {
+    if (!playwrightProbe.test && !playwrightProbe.core) {
+      return 'npm install -D playwright @playwright/test   # playwright 未检测到，specmint 用 peerDependencies，请自行安装并固定版本';
+    }
+    if (!playwrightProbe.test) {
+      return `npm install -D @playwright/test@${playwrightProbe.coreVersion ?? '>=1.58.0'}   # playwright core 已装（${playwrightProbe.coreVersion ?? 'unknown'}），但缺 @playwright/test`;
+    }
+    if (!playwrightProbe.core) {
+      return `npm install -D playwright@${playwrightProbe.testVersion ?? '>=1.58.0'}   # @playwright/test 已装（${playwrightProbe.testVersion ?? 'unknown'}），但缺 playwright core`;
+    }
+    return `playwright 版本检查：@playwright/test ${playwrightProbe.testVersion ?? '?'} · playwright core ${playwrightProbe.coreVersion ?? '?'}`;
+  })();
 
   const nextSteps = [
     'npm install',
+    playwrightHint,
     'npx playwright install chromium   # 或装系统 Chrome/Edge 走 auto 通道',
     'specmint models select',
     'specmint generate "<测试需求描述>" --priority P0',
@@ -203,6 +267,10 @@ export async function initCommand(options: InitOptions): Promise<void> {
     wroteConfig,
     updatedGitignore,
     legacyFiles,
+    playwright: {
+      '@playwright/test': playwrightProbe.test ? (playwrightProbe.testVersion ?? 'unknown') : null,
+      playwright: playwrightProbe.core ? (playwrightProbe.coreVersion ?? 'unknown') : null,
+    },
     nextSteps,
   };
 
@@ -225,6 +293,12 @@ export async function initCommand(options: InitOptions): Promise<void> {
   if (legacyFiles.length > 0) {
     logger.warn(`检测到历史 init 产物（已不影响运行，可手动删除）：`);
     for (const f of legacyFiles) logger.warn(`  - ${f}`);
+  }
+
+  // 强制提醒：若用户完全没装 playwright，run/generate 命令会立刻报"找不到模块"，
+  // 提前给出 blocker 比盲目给"下一步"更友好。
+  if (!playwrightProbe.test && !playwrightProbe.core) {
+    logger.warn('⚠ 未检测到 playwright / @playwright/test —— 见 nextSteps 第 2 步');
   }
 
   logger.info('下一步：');
