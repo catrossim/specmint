@@ -139,6 +139,14 @@ export interface CaseMeta {
   pageObject: PageObjectRef;
   stats: CaseStats;
   /**
+   * spec.ts 内容哈希（sha256 前 16 位），由 adopt / updateCode 写入。
+   *
+   * 用途：检测「已裁决用例被偷偷改过」。adopt 时若发现当前内容哈希与本字段不一致，
+   * 且 verdict=approved，则自动回落 pending——审核过的东西被改了就不再是原来那个 approved。
+   * 这是人工审核可信度的基础，缺失该字段时跳过检测（兼容历史 meta）。
+   */
+  contentHash?: string;
+  /**
    * 人工裁决（人工仲裁）状态。缺失或 verdict 未设视为 'pending'。
    * 仅作为元信息持久化；不参与 run / heal 的执行语义（待 P1 接入）。
    */

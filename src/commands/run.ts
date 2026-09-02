@@ -1,10 +1,11 @@
-import { realpathSync } from 'node:fs';
+import { realpathSync, existsSync } from 'node:fs';
 import { relative as pathRelative, resolve as pathResolve } from 'node:path';
 import { runTests } from '../runner/executor.js';
 import { loadConfig } from '../config.js';
 import { createStores } from '../store/index.js';
 import { ExitCode } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
+import { listAuth } from './auth.js';
 import type { Priority, ReviewVerdict } from '../store/types.js';
 import type { CaseStore } from '../store/index.js';
 
@@ -108,6 +109,105 @@ export async function runCommand(
     if (options.includePending) blockedSet.delete('pending');
     if (options.includeNeedsFix) blockedSet.delete('needs-fix');
     if (options.includeRejected) blockedSet.delete('rejected');
+  }
+
+  // v0.7.0: --auth 早返 + storageState 默认路径派生与预检
+  //
+  // 关键：必须在 verdict gate 应用之前（否则 options.patterns 被 verdict gate 改写后，
+  // 下方 `!options.patterns` 条件永远 false，早返逻辑永远不进入）。
+  //
+  // 三段语义：
+  //   1) --auth 名字拼错（listAuth 里没注册）→ NOT_FOUND（用户应改参数或跑 auth init）
+  //   2) --auth 角色已注册但 storageState 缺失/失效 → AUTH_EXPIRED（提示 refresh）
+  //   3) --auth 角色注册 + storageState 完整，但 caseStore 没匹配用例 → NOT_FOUND
+  //   4) storageState 默认路径派生 + 文件缺失预检 → AUTH_EXPIRED（避免推到 Playwright 阶段）
+  if (options.authName && !options.grep && !options.patterns && !pattern) {
+    const authEntry = listAuth().find((e) => e.name === options.authName);
+    const items = caseStore.list({ auth: options.authName });
+    if (items.length === 0) {
+      if (!authEntry) {
+        // 名字拼错：listAuth 里没注册过
+        logger.warn(
+          `auth 角色 "${options.authName}" 未注册，用 \`specmint auth list\` 查看已注册的`,
+        );
+        process.exitCode = ExitCode.NOT_FOUND;
+        return;
+      }
+      if (!authEntry.hasStorageState) {
+        // role 已注册但 storageState 缺失/失效
+        logger.error(
+          `auth 角色 "${options.authName}" 的 storageState 不存在：${authEntry.storageStatePath}`,
+        );
+        logger.error(
+          `hint: 运行 \`specmint auth refresh ${options.authName}\` 生成；或加 --no-auth 跳过`,
+        );
+        process.exitCode = ExitCode.AUTH_EXPIRED;
+        return;
+      }
+      // role 存在且 storageState 存在，但 caseStore 里没有 meta.auth === name 的用例
+      logger.warn(`没有匹配 auth=${options.authName} 的用例`);
+      process.exitCode = ExitCode.NOT_FOUND;
+      return;
+    }
+    // verdict 卡口：与全量跑分支保持一致，直接在分支内过滤
+    const { kept, skipped } = gateEnabled
+      ? applyVerdictGate(items.map((m) => m.name), caseStore, blockedSet)
+      : { kept: items.map((m) => m.name), skipped: [] };
+    if (kept.length === 0) {
+      logger.warn(
+        `[review gate] auth=${options.authName} 匹配 ${items.length} 条全部被 verdict 过滤跳过`,
+      );
+      process.exitCode = ExitCode.NOT_FOUND;
+      return;
+    }
+    const keptSet = new Set(kept);
+    options.patterns = items
+      .filter((m) => keptSet.has(m.name))
+      .map((m) => specPathToPattern(m.specPath));
+    if (skipped.length > 0 && !options.json) {
+      const preview = skipped
+        .slice(0, 5)
+        .map((s) => `${s.name}=${s.verdict}`)
+        .join(', ');
+      logger.warn(
+        `[review gate] 跳过 ${skipped.length} 条（verdict 被过滤）：${preview}${skipped.length > 5 ? ' ...' : ''}`,
+      );
+    }
+  }
+  // 显式目标 + --auth 组合：--auth 只注入全局 storageState，不会按 meta.auth 过滤用例集
+  // （过滤语义仅在无 grep / patterns / 位置参数时生效，见上方早返分支），显式提醒避免误解
+  if (options.authName && (pattern || options.grep || options.patterns) && !options.json) {
+    const targetDesc = [
+      pattern && `"${pattern}"`,
+      options.grep && `--grep ${options.grep}`,
+      options.patterns && `--patterns`,
+    ]
+      .filter(Boolean)
+      .join(' + ');
+    logger.warn(
+      `[--auth] 已指定显式目标（${targetDesc}）：--auth 仅注入全局 storageState（${options.authName}），不会按 meta.auth 过滤用例集`,
+    );
+  }
+  if (options.authName && !options.storageState && !options.noAuth) {
+    options.storageState = `.specmint/auth/storage/${options.authName}.json`;
+  }
+  // 当 options.storageState 是从 authName 派生的默认路径（而非用户显式 --storage-state 指定），
+  // 提前校验文件存在性，避免把"缺失"错误推到 Playwright 阶段造成排查困难。
+  if (
+    options.authName &&
+    options.storageState &&
+    !options.noAuth &&
+    options.storageState === `.specmint/auth/storage/${options.authName}.json` &&
+    !existsSync(options.storageState)
+  ) {
+    logger.error(
+      `auth 角色 "${options.authName}" 的 storageState 不存在：${options.storageState}`,
+    );
+    logger.error(
+      `hint: 运行 \`specmint auth refresh ${options.authName}\` 生成；或加 --no-auth 跳过`,
+    );
+    process.exitCode = ExitCode.AUTH_EXPIRED;
+    return;
   }
 
   // P1：全量跑分支的 verdict 卡口（无 pattern / 无 grep / 无 --priority / 无 --auth 时）
@@ -271,8 +371,29 @@ export async function runCommand(
   }
 
   if (options.authName && !options.grep && !options.patterns && !pattern) {
+    // v0.7.0: --auth 早返（已上移到 verdict gate 之前；见上方"v0.7.0"段）
+    // 此处保留 verdict gate 派生 patterns 的逻辑（authName 分支专属）
+    const authEntry = listAuth().find((e) => e.name === options.authName);
     const items = caseStore.list({ auth: options.authName });
     if (items.length === 0) {
+      // 早期判断已在上方完成（NOT_FOUND / AUTH_EXPIRED），这里只兜底：
+      if (!authEntry) {
+        logger.warn(
+          `auth 角色 "${options.authName}" 未注册，用 \`specmint auth list\` 查看已注册的`,
+        );
+        process.exitCode = ExitCode.NOT_FOUND;
+        return;
+      }
+      if (!authEntry.hasStorageState) {
+        logger.error(
+          `auth 角色 "${options.authName}" 的 storageState 不存在：${authEntry.storageStatePath}`,
+        );
+        logger.error(
+          `hint: 运行 \`specmint auth refresh ${options.authName}\` 生成；或加 --no-auth 跳过`,
+        );
+        process.exitCode = ExitCode.AUTH_EXPIRED;
+        return;
+      }
       logger.warn(`没有匹配 auth=${options.authName} 的用例`);
       process.exitCode = ExitCode.NOT_FOUND;
       return;
@@ -303,6 +424,7 @@ export async function runCommand(
     }
   }
   if (options.authName && !options.storageState && !options.noAuth) {
+    // v0.7.0: storageState 默认路径派生（已上移），此处保留作为 fallback
     options.storageState = `.specmint/auth/storage/${options.authName}.json`;
   }
 
@@ -423,10 +545,31 @@ export async function runCommand(
           `[run] ${matchCandidate.name} verdict=${verdict}（非 approved 但已通过过滤，仍执行；建议尽快标 approved 或 needs-fix）`,
         );
       }
-    } else if (!options.json) {
-      logger.info(
-        `[review gate] ${resolvedPattern} 不在用例库中（无对应 meta），跳过 verdict 检查`,
-      );
+    } else {
+      // fail-closed：直传的文件路径不在用例库中（无对应 meta.json），无法确认其裁决
+      // 状态，一律拒绝执行。
+      //
+      // 历史行为是只打一行 info 就放行，导致 `specmint run <任意 .ts 路径>` 可以完全
+      // 绕过人工审核卡口——这与"用例必须经人工裁决才能进 CI"的目标直接冲突。
+      //
+      // 注：本分支只在 gateEnabled 为 true 时进入，而 --force / --no-require-review
+      // 会让 gateEnabled 变 false，因此这里无需再判 --force：想临时绕过就显式关卡口。
+      const message = `[review gate] ${resolvedPattern} 不在用例库中（无对应 meta.json），无法确认裁决状态，已拒绝执行`;
+      const hint =
+        '先 `specmint adopt <file> --priority P0` 纳管并完成 `specmint review`；确需临时绕过请显式用 --force';
+      logger.error(message);
+      logger.warn(hint);
+      if (options.json) {
+        process.stdout.write(
+          JSON.stringify(
+            { ok: false, error: { code: ExitCode.NOT_FOUND, message, hint } },
+            null,
+            2,
+          ) + '\n',
+        );
+      }
+      process.exitCode = ExitCode.NOT_FOUND;
+      return;
     }
   }
 

@@ -15,6 +15,17 @@ export const ExitCode = {
   AGENT_ERROR: 6,        // pi-agent 调用失败
   TEST_FAILED: 7,        // 用例运行失败
   IO_ERROR: 8,           // 文件读写失败
+  LINT_FAILED: 9,        // spec 静态校验未通过（lint / adopt）
+  // --- auth 子系统细分（10-19）---
+  // 关键设计：所有 auth 子命令共享一组细分码，使得 `auth doctor` / `auth refresh` / `auth lint`
+  // 失败时退出码语义稳定，CI/上层脚本可基于退出码做差异化处理。
+  AUTH_NOT_FOUND: 10,         // storageState 文件缺失
+  AUTH_EXPIRED: 11,           // storageState 距上次刷新超过阈值（warn-only 默认；非 0 退出）
+  AUTH_LOGIN_FAILED: 12,      // setup 文件登录步骤失败（refresh 子进程非 0 退出）
+  AUTH_INCOMPLETE_SETUP: 13,  // setup 文件缺 storageState 调用 / 缺登录成功断言（lint 检出）
+  AUTH_DOMAIN_MISMATCH: 14,   // Cookie 域名与 config.baseURL 不匹配
+  // --- v0.7.0 新增 ---
+  VERIFY_FAILED: 15,          // spec 静态可达性校验未通过（lint 之上、run 之下）
 } as const;
 export type ExitCodeValue = (typeof ExitCode)[keyof typeof ExitCode];
 

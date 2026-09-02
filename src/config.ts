@@ -250,6 +250,12 @@ export const STORAGE_LAYOUT = {
    * 缺失/为空/损坏时静默降级（null + debug 日志），与现状字节级一致。
    */
   contractFile: '.specmint/contract.json',
+  /**
+   * lint 规则 severity 覆盖配置（v0.7.0 新增）。
+   * 与 contractFile 同策略："路径不可配置"。文件不存在视为「无覆盖」，
+   * 存在则按 rules map 应用 `error` | `warn` | `off`。
+   */
+  lintRulesFile: '.specmint/lint-rules.json',
 } as const;
 
 export interface LoadConfigResult {

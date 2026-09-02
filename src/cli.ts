@@ -18,6 +18,9 @@ import { initCommand } from './commands/init.js';
 import { generateCommand } from './commands/generate.js';
 import { runCommand } from './commands/run.js';
 import { rerunCommand } from './commands/rerun.js';
+import { adoptCommand } from './commands/adopt.js';
+import { lintCommand } from './commands/lint.js';
+import { verifyCommand } from './commands/verify.js';
 import { listCommand } from './commands/list.js';
 import { showCommand } from './commands/show.js';
 import { deleteCommand } from './commands/delete.js';
@@ -34,6 +37,10 @@ import {
   authInitCommand,
   authRefreshCommand,
   authGenerateCommand,
+  authDoctorCommand,
+  authDebugCommand,
+  authLintCommand,
+  authMatrixCommand,
 } from './commands/auth.js';
 import {
   reviewInteractiveCommand,
@@ -59,12 +66,16 @@ function collectSetParam(value: string, previous: Record<string, string> = {}): 
 program
   .name('specmint')
   .description('面向 agent 的 Playwright 页面测试 CLI 工具')
-  .version('0.3.0')
+  .version('0.7.0')
   .option('--json', '全局 JSON 输出模式')
-  .hook('preAction', (thisCommand) => {
-    const opts = thisCommand.opts<{ json?: boolean }>();
-    if (opts.json || process.env.SPECMINT_JSON === '1') {
+  .hook('preAction', (thisCommand, actionCommand) => {
+    const globalOpts = thisCommand.optsWithGlobals<{ json?: boolean }>();
+    const isJson = globalOpts.json || process.env.SPECMINT_JSON === '1';
+    if (isJson) {
       logger.setJsonMode(true);
+      // commander v15：program-level `--json` 被 program 提前吸收，子命令拿不到。
+      // 把全局 flag 同步到子命令，确保子命令的 options.json 也能被业务逻辑读到。
+      actionCommand.setOptionValue('json', true);
     }
   });
 
@@ -73,6 +84,7 @@ program
   .command('init')
   .description('初始化项目结构与默认配置')
   .option('-f, --force', '覆盖已存在的配置文件')
+  .option('--no-interactive', '跳过末尾的 auth 引导问询（CI 友好，自动行为）')
   .option('--json', '输出 JSON 格式')
   .action(initCommand);
 
@@ -221,7 +233,11 @@ program
     '--config <path>',
     '显式指定自定义 Playwright 配置文件（高级选项；默认走包内配置 dist/runner/playwright.config.{js,ts}）',
   )
-  .action(runCommand);
+  .action(async (pattern, options) => {
+    // commander 把 `--auth` 解析成 options.auth；映射到 RunOptions.authName
+    const { auth, ...rest } = options as Parameters<typeof runCommand>[1] & { auth?: string };
+    await runCommand(pattern, { ...rest, authName: auth });
+  });
 
 // --- rerun ---
 program
@@ -235,6 +251,73 @@ program
   .option('--no-require-review', '关闭 verdict 卡口')
   .option('--json', '输出 JSON 格式')
   .action(rerunCommand);
+
+// --- adopt ---
+// 宿主 agent（skill）/ 人工写好 spec.ts 后的纳管入口：只补 meta.json，不改用例代码。
+// 没有这一步，外部写入的 spec.ts 会被 caseStore.list() 静默跳过（缺 meta.json），
+// run / review / verdict 卡口全都看不见它。
+program
+  .command('adopt [target]')
+  .description(
+    '纳管已存在的 spec.ts 进入用例库（只写 meta.json，不改动用例代码）。\n' +
+    '  单文件：specmint adopt .specmint/cases/auth/login-success.spec.ts --priority P0\n' +
+    '  整库  ：specmint adopt --priority P1\n' +
+    '  glob  ：specmint adopt "auth/**/*.spec.ts" --priority P0 --module 用户认证\n' +
+    '  元数据优先级：CLI 参数 > spec.ts 头部 @specmint 注释 > 文件路径推导',
+  )
+  .option(
+    '-p, --priority <priority>',
+    '用例优先级：P0|P1|P2|P3（也可在 spec.ts 头部写 `// @specmint priority: P0`）',
+    (v) => {
+      const up = String(v).trim().toUpperCase();
+      if (!(PRIORITIES as readonly string[]).includes(up)) {
+        throw new Error(`--priority 必须是 ${PRIORITIES.join('|')} 之一，当前 "${v}"`);
+      }
+      return up as Priority;
+    },
+  )
+  .option('--module <module>', '模块中文名（覆盖文件注释的 @specmint module）')
+  .option('--group <group>', '功能分组 kebab-case（必须与该 spec 所在目录一致）')
+  .option('--tag <tag>', '附加标签，可多次传入', (v, prev: string[]) => prev.concat(v), [] as string[])
+  .option('--ticket <ticket>', '关联需求单号，可多次传入', (v, prev: string[]) => prev.concat(v), [] as string[])
+  .option('--auth <role>', '关联登录态角色（引用 .specmint/auth/<role>.setup.ts）')
+  .option('--description <text>', '用例描述（缺省时取 test.describe 标题）')
+  .option('--no-lint', '跳过静态校验直接纳管（不推荐，仅用于存量迁移）')
+  .option('--keep-verdict', '内容变更时保留原裁决，不自动回落 pending')
+  .option('-f, --force', '全量覆盖已有 meta 字段（默认只补缺失字段）')
+  .option('--json', '输出 JSON 格式')
+  .action(async (target: string, options: Parameters<typeof adoptCommand>[1] & { lint?: boolean }) => {
+    // commander 的 --no-lint 会解析为 options.lint（默认 true）
+    const { lint, ...rest } = options;
+    await adoptCommand(target, { ...rest, noLint: lint === false });
+  });
+
+// --- lint ---
+program
+  .command('lint [target]')
+  .description(
+    '静态校验 spec.ts 质量（默认扫整个用例库）。\n' +
+    '  红线（error）：缺 import / 无 test 块 / 无断言 / waitForTimeout / 易碎定位器\n' +
+    '  软性（warn） ：console 遗留 / testid 未在契约声明',
+  )
+  .option('--strict', 'warning 也视为失败（CI 严格模式）')
+  .option('--json', '输出 JSON 格式')
+  .action(async (target: string, options: Parameters<typeof lintCommand>[1]) => {
+    await lintCommand(target, options);
+  });
+
+// --- verify ---
+program
+  .command('verify [target]')
+  .description(
+    '静态可达性校验（lint 之上、run 之下）。\n' +
+    '  红线（error）：空 test 体 / 定位器未在契约声明\n' +
+    '  不启动浏览器，仅做静态分析',
+  )
+  .option('--json', '输出 JSON 格式')
+  .action(async (target: string, options: Parameters<typeof verifyCommand>[1]) => {
+    await verifyCommand(target, options);
+  });
 
 // --- list ---
 program
@@ -398,9 +481,13 @@ reviewCmd
 const skillCmd = program.command('skill').description('管理 agent skill 定义');
 skillCmd
   .command('export')
-  .description('在 ./skills/specmint/ 生成 agent 可加载的 skill 文件')
+  .description(
+    '批量导出 agent skill 定义到 ./skills-export/。\n' +
+    '  拆分为 4 个：specmint（路由）/ specmint-author（写+纳管）/ specmint-operate（审+跑+修）/ specmint-auth（登录态）',
+  )
   .option('--target <target>', '目标 agent：codebuddy | claude-code', 'codebuddy')
-  .option('--install', '一键安装到 IDE skill 加载目录（codebuddy: .codebuddy/skills/）')
+  .option('--only <names>', '只导出指定 skill（逗号分隔），如 --only specmint-author')
+  .option('--install', '同时安装到 IDE skill 加载目录（codebuddy: .codebuddy/skills/<name>/）')
   .option('--json', '输出 JSON 格式')
   .action(async (options: Parameters<typeof skillExportCommand>[0]) => {
   await skillExportCommand(options);
@@ -456,6 +543,29 @@ authCmd
   .option('-u, --url <url>', '目标 URL（启用探索）')
   .option('--json', '输出 JSON 格式')
   .action(authGenerateCommand);
+authCmd
+  .command('doctor')
+  .description('一行诊断所有 auth 状态（过期 / 缺断言 / Cookie 域名不匹配）')
+  .option('--expiry-hours <hours>', '自定义过期阈值（默认 24h）', (v) => Number(v))
+  .option('--json', '输出 JSON 格式')
+  .action(authDoctorCommand);
+authCmd
+  .command('debug <name>')
+  .description('headed + 慢动作模式跑 setup 文件，便于人工观察登录过程')
+  .option('--json', '输出 JSON 格式')
+  .action(authDebugCommand);
+authCmd
+  .command('lint')
+  .description('静态扫描 setup 文件（明文密码 / 缺 storageState / 缺断言）')
+  .option('--json', '输出 JSON 格式')
+  .action(authLintCommand);
+authCmd
+  .command('matrix')
+  .description('多角色矩阵跑同一批用例，对比 pass/fail 表')
+  .option('--roles <roles>', '逗号分隔的角色名（缺省 = 所有有 storageState 的）')
+  .option('--grep <pattern>', '透传给 specmint run --grep')
+  .option('--json', '输出 JSON 格式')
+  .action(authMatrixCommand);
 
 program.parseAsync(process.argv).catch((err: unknown) => {
   if (err instanceof CliError) {

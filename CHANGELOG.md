@@ -4,9 +4,118 @@ specmint 项目的所有重要变更都会记录在这里。版本号遵循 [Sem
 
 ## 版本说明
 
-- **当前发布版本**：`0.5.2`（内部 v2.7 增量，详见 [0.5.2] 段）
-- 内部迭代以 `v2` / `v2.1` / `v2.2` / `v2.3` / `v2.4` / `v2.5` / `v2.6` / `v2.7` 标识，本文件作为对外权威变更日志。
+- **当前发布版本**：`0.7.0`（详见下方段落）
+- 内部迭代以 `v2` / `v2.1` / `v2.2` / `v2.3` / `v2.4` / `v2.5` / `v2.6` / `v2.7` / `v2.8` / `v2.9` 标识，本文件作为对外权威变更日志。
 - 自 `0.1.0` 起，每个 npm release 都会在此新增一段 `## [x.y.z] - YYYY-MM-DD`。
+
+---
+
+## [0.7.0] - 2026-09-02（内部 v2.9）
+
+在「lint → run」之间补上**静态可达性层**，并把 lint 升级为可配置化、把 auth 错误码从「隐式」变「可预测」。三件事互不依赖：
+
+### 新增
+
+- **`specmint verify [target]`**：静态可达性校验（lint 之上、run 之下）。不启动浏览器，仅做静态分析。v0.7.0 上线两条规则：
+  - `empty-test-body` — `test('x', async () => {})` 这类"啥都没做"的用例 → error
+  - `locator-not-in-contract` — `getByTestId('x')` 中的 `x` 不在 `.specmint/contract.json` 声明的 testIds 集合 → error
+  - 退出码 `15 = VERIFY_FAILED`
+  - 不在 v0.7.0 范围（已知留白）：**编译检查**（TS 7 移除了程序化 `transpileModule` API，待 TS 提供兼容 sync API 后补上，v0.8+ 跟踪） / 路径可达性（需 contract.routes 字段）/ 缺 await 检测
+- **`.specmint/lint-rules.json`**：lint 规则 severity 覆盖配置（v0.7.0 新）。位置固定，路径不可改。文件不存在 → 默认行为不变；存在 → 按 `rules` map 应用 `error` | `warn` | `off`，被 `adopt` 与 `lint` 共用同一套配置：
+  ```json
+  {
+    "extends": "specmint:recommended",
+    "rules": {
+      "debug-leftover": "error",
+      "wait-for-timeout": "warn",
+      "brittle-selector": "off"
+    }
+  }
+  ```
+  未知规则 id → `logger.warn` 后忽略；规则 value 不是 `error`/`warn`/`off` → `CliError(IO_ERROR)`。
+  仍不支持运行时 JS plugin（避免引入 Node API 依赖 CLI 体积），仅 JSON 配置级别。
+
+### 修复（关键）
+
+- **`run --auth <name>` 退出码细化**：旧实现不区分「名字拼错」与「storageState 缺失」两类典型错误——`run --auth=typo` 时只有「没匹配用例」warning（exit 4），但 storageState 真的不存在时要把错误推到 Playwright 阶段才暴露（exit 7 + 模糊的 `Cannot find module`）。v0.7.0 起：
+  - **名字拼错**（`listAuth()` 中没注册）→ `NOT_FOUND (4)`：`auth 角色 "typo" 未注册，用 \`specmint auth list\` 查看已注册的`
+  - **storageState 缺失/失效**（role 注册但 `.specmint/auth/storage/<role>.json` 不存在或解析失败）→ `AUTH_EXPIRED (11)`：`auth 角色 "admin" 的 storageState 不存在：...，请运行 \`specmint auth refresh admin\``
+  - 早返逻辑上移到 verdict gate 之前，避免与 verdict 卡口互锁
+- **`run` 默认路径 storageState 预检**：当 `options.storageState` 是从 `authName` 派生的默认路径（而非用户显式 `--storage-state` 指定）时，提前校验文件存在性——把「storageState 缺失」错误从 Playwright 阶段（exit 7）提前到 specmint 阶段（exit 11 + 可读 hint）
+- **`run --auth` commander 解析别名映射**：旧实现 `--auth` 解析到 `options.auth`，但 `RunOptions` 期望 `authName`，导致 `--auth` 标志完全未生效、走到 Playwright 阶段才报 `Cannot find module`。v0.7.0 起在 cli.ts 的 `run` action 中显式映射 `options.auth → options.authName`
+
+### 重构
+
+- `utils/spec-lint.ts`：`LintOptions` 新增 `overrides` 字段；`applyOverrides()` 在 issues 收集完成后应用 severity 调整（`off` 跳过 / `warn`/`error` 重新归桶），未知规则 id 走 `logger.warn` 后忽略；`KNOWN_RULE_IDS` 从 `LINT_RULES` 派生导出
+- `commands/run.ts`：把 `--auth` 早返逻辑（NOT_FOUND vs AUTH_EXPIRED 区分）+ storageState 默认路径派生与预检上移到 verdict gate 初始化之后、verdict gate 应用之前的位置（避免 `options.patterns` 被 gate 改写后 `!options.patterns` 条件永远 false）
+
+### 文档
+
+- `README.md` §3 命令表新增 `verify` 与 lint 覆盖配置说明；§5 当前状态段落新增 v0.7.0 子段
+- `skills/specmint/SKILL.md`：在路由表加 `verify`，并在「lint vs verify」段明确两类工具的边界
+- `skills/specmint-author/SKILL.md`：补 `.specmint/lint-rules.json` 配置示例 + `lint` 规则 id 全列表
+- `skills/specmint-auth/SKILL.md`：补 `AUTH_EXPIRED (11)` 与 `NOT_FOUND (4)` 的 `run --auth` 退出码对照表
+- `skills/specmint-operate/SKILL.md`：补 `run --auth <name>` 早返逻辑与修复路径
+
+### 升级步骤（v0.6.0 → v0.7.0）
+
+完全向后兼容：
+
+1. **无需任何操作**：所有 v0.6.0 调用行为字节级一致
+2. **可选**：在项目根创建 `.specmint/lint-rules.json` 启用 lint 覆盖（默认行为不变）
+3. **可选**：CI 流水线加一个 `specmint verify` 步骤作为 lint 与 run 之间的额外卡口（exit 15 = 失败）
+
+---
+
+## [0.6.0] - 2026-09-02（内部 v2.8）
+
+定位转向：从「自然语言 → Playwright 自动转换」转向「Playwright 用例生命周期管理」。用例是**纯 Playwright TS 代码**（确定的逻辑，不是自然语言 DSL），specmint 负责纳管、校验、人工裁决、执行、归档。详见 README §1 与 [docs/review.md](./docs/review.md) §2.1。
+
+### 新增
+
+- **`specmint adopt`**：把已存在的 spec.ts 纳入用例库。只写 meta.json，不动用例代码。行为：
+  - 默认跑 lint：error（缺 priority / 无断言 / `waitForTimeout` / 易碎定位器等）**拒绝入仓**，warn 放行但打印
+  - 支持单文件 / glob / 整库三种 target 形式
+  - 元数据优先级：CLI 参数 > spec.ts 头部 `@specmint module:/priority:/tag:/ticket:` 注释 > 文件路径推导
+  - `--group` 与文件所在目录不一致时拒绝（adopt 不移动文件，避免静默改路径）
+  - `--force` 全量覆盖字段（默认只补缺失，保留裁决状态）
+  - `--keep-verdict` 逃生舱：内容变更时保留原 verdict 不回落 pending（CI 重纳管场景）
+  - 输出 `--json` 格式供 agent 解析
+- **`specmint lint`**：静态校验 spec.ts（adopt 内部调用同一套规则）：
+  - **error 红线**：`missing-playwright-import` / `no-test-block` / `no-assertion` / `wait-for-timeout` / `brittle-selector` / `group-mismatch` / `missing-priority`
+  - **warn 软规则**：`debug-leftover`（`console.*` / `debugger`）/ `unknown-testid`（未在 `contract.json` 声明的 `data-testid`）
+  - `--strict` 让 warn 也算失败
+  - 新退出码 `9 = LINT_FAILED`
+- **审核可信度机制**：meta.json 新增 `contentHash = sha256(spec.ts).slice(0,16)`。每次 `adopt` 时重算，已 `approved` 的用例若内容变化，**自动回落 pending**，`reviewer` / `reviewedAt` 清空
+
+### 修复（关键）
+
+- **`run` / `rerun` verdict 卡口 fail-open 漏洞关闭**：此前 `run <file>` 接到「不在 `caseStore` 中的 spec 路径」会**静默放行**，等于绕过整个裁决流程。v0.6.0 起，未纳管文件**拒绝执行**并退出码 4（NOT_FOUND）。回归探针：写一个 `x.spec.ts`（无 meta.json）→ `specmint run x.spec.ts` 应被卡口拦下。
+- **重复告警去重**：`run` 在 verdict 卡口 + 单文件匹配两个分支都触发 `list()`，旧实现每条缺 meta 用例都打两条 warning。新实现用进程级 `Set` 去重，且提示语改为 `已跳过（纳管：specmint adopt <file> --priority P0）`，直接给 agent 可执行的下一步。
+- **`skill export` 路径 bug 关闭**：旧实现用 `process.cwd()` 定位 `skills/specmint/SKILL.md`，但该路径不在 npm `files` 列表里 —— 用户在自己项目里跑必然 NOT_FOUND。改用 `import.meta.url` 定位包内目录（dist/commands → ../../skills）。
+
+### 重构
+
+- **`skill export` 拆分为 4 个 skill**（旧的单文件 SKILL.md 18KB 太长）：
+  - `specmint`（薄路由：生命周期 + 路由表 + 三步快速路径）
+  - `specmint-author`（写 + 纳管 + lint 规则）
+  - `specmint-operate`（裁决 + 执行 + 修复 + CI）
+  - `specmint-auth`（登录态）
+  - `_shared/layout.md` 与 `_shared/contract.md` 公共片段由 `export` 时自动按 `<!-- include: x.md -->` 拼接
+  - 默认输出到 `./skills-export/<name>/`（不再回写源目录），`--install` 一键装到 `.codebuddy/skills/<name>/` 或 `.claude/skills/<name>/`
+- **`run` / `rerun` 的路径处理重构**：`spec-files.ts` 统一处理三种 target 形态（单文件 / glob / 整库）与 Windows 反斜杠归一化。`case-store.list()` 复用同一套路径判定，避免与 spec-files 规则漂移
+- **`spec-lint` 模块化**：lint 规则从 `commands/lint.ts` 抽出到 `utils/spec-lint.ts`，供 `adopt` 共用（DRY）
+- **`init` 的 nextSteps 重写**：双路径并列（路径 A `adopt` 推荐、路径 B `generate` 可选），`$` 提示符仅套在命令上、注释行用裸行
+
+### 文档
+
+- `README.md`：定位语、§1 应用场景、§2 快速开始（路径 A 优先）、§3 命令表（+adopt/lint）、§5 当前状态（v0.6.0 段落）全部按新方向重写
+- `docs/review.md`：新增 §2.1「关键卡口强化（v0.6.0+）」详述 fail-closed、审核可信度、重复告警去重三类变更
+- `skills/specmint/SKILL.md`：从单文件 18KB 缩到 ~8KB 路由版；新增 3 个细分 skill；`_shared/` 公共片段
+
+### 包分发
+
+- `package.json` 的 `files` 字段新增 `"skills"`，npm 包分发时带上新拆分后的 4 个 skill + `_shared`
 
 ---
 

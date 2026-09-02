@@ -108,6 +108,8 @@ const LEGACY_FILES = [
 export interface InitOptions {
   force?: boolean;
   json?: boolean;
+  /** 跳过交互式 prompt（CI 友好，--no-interactive 或 SPECMINT_NO_INTERACTIVE=1） */
+  interactive?: boolean;
 }
 
 export interface InitResult {
@@ -250,10 +252,19 @@ export async function initCommand(options: InitOptions): Promise<void> {
     return `playwright 版本检查：@playwright/test ${playwrightProbe.testVersion ?? '?'} · playwright core ${playwrightProbe.coreVersion ?? '?'}`;
   })();
 
+  // 两条路径并列展示：
+  // - 路径 A（adopt）：宿主 agent / 人工写 Playwright 用例后纳管，不需要配 LLM，门槛最低
+  // - 路径 B（generate）：由 specmint 调 LLM 生成，需要先 `models select`
+  // 以 adopt 为推荐路径，是因为生成环节交给宿主 agent 更可控（它能看到完整源码上下文）。
   const nextSteps = [
     'npm install',
     playwrightHint,
     'npx playwright install chromium   # 或装系统 Chrome/Edge 走 auto 通道',
+    '# ── 路径 A（推荐）：写用例 → 纳管 → 裁决 → 执行，无需配置 LLM ──',
+    'specmint adopt .specmint/cases/auth/login-success.spec.ts --priority P0',
+    'specmint review            # 人工裁决：未裁决用例不会被执行',
+    'specmint run               # 仅执行 verdict=approved 的用例',
+    '# ── 路径 B：用 LLM 生成用例（需先选模型）──',
     'specmint models select',
     'specmint generate "<测试需求描述>" --priority P0',
   ];
@@ -303,6 +314,59 @@ export async function initCommand(options: InitOptions): Promise<void> {
 
   logger.info('下一步：');
   for (const step of nextSteps) {
-    process.stdout.write(`  $ ${step}\n`);
+    // 以 # 开头的是分组说明，不套 `$` 提示符
+    process.stdout.write(step.startsWith('#') ? `  ${step}\n` : `  $ ${step}\n`);
+  }
+
+  // 交互式引导：让 init 在末尾问"目标 URL 是否需要登录"，避免新用户卡在"该敲哪条命令"
+  // CI / 非 TTY 场景一律跳过，--no-interactive 也跳过
+  const noInteractive =
+    options.interactive === false ||
+    process.env.SPECMINT_NO_INTERACTIVE === '1' ||
+    !process.stdin.isTTY;
+  if (noInteractive) return;
+
+  try {
+    const answer = await promptYesNo('\n目标 URL 是否需要登录？（Y/n） ');
+    if (!answer) {
+      logger.info('OK，跳过 auth 引导。后续随时跑 `specmint auth init <name>` 即可。');
+      return;
+    }
+    const roleName = await promptLine('给这个角色起个名字（kebab-case，如 admin）：');
+    if (!roleName || !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(roleName)) {
+      logger.warn(`名字 "${roleName ?? ''}" 不符合 kebab-case，已跳过 auth 引导。可手动 \`specmint auth init <name>\``);
+      return;
+    }
+    const url = await promptLine('登录页 URL（可选，回车跳过让 PI 自己探索）：');
+    logger.info(`→ 接下来运行：specmint auth init ${roleName}`);
+    if (url) logger.info(`  然后用 PI 起草：specmint auth generate --name ${roleName} --url ${url} "<登录描述>"`);
+    logger.info(`  或手写登录步骤后跑：specmint auth refresh ${roleName}`);
+  } catch {
+    // 用户按 Ctrl+C 静默退出，不打扰
+  }
+}
+
+/** 简化的 readline 问询：Y/n，默认 yes */
+async function promptYesNo(question: string): Promise<boolean> {
+  const { createInterface } = await import('node:readline/promises');
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const answer = (await rl.question(question)).trim().toLowerCase();
+    if (answer === '' || answer === 'y' || answer === 'yes') return true;
+    if (answer === 'n' || answer === 'no') return false;
+    return true; // 模糊输入按 yes 兼容
+  } finally {
+    rl.close();
+  }
+}
+
+/** 简化的 readline 单行输入 */
+async function promptLine(question: string): Promise<string> {
+  const { createInterface } = await import('node:readline/promises');
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    return (await rl.question(question)).trim();
+  } finally {
+    rl.close();
   }
 }

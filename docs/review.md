@@ -36,6 +36,35 @@ verdict 状态机共 5 态：`pending` / `approved` / `needs-fix` / `rejected` /
 > - **嵌套同名用例互不串扰**：`login-success` 与 `auth/login-success` 是两个独立用例，`specmint run login-success` 只跑根级那条，不会连带执行 `auth/login-success`（反之亦然）。
 > - **单文件直传走同一套卡口**：`specmint run .specmint/cases/x.spec.ts`、绝对路径、Windows 反斜杠路径都能正确反查 verdict（此前这些形式会被静默跳过检查）。
 
+### 2.1 关键卡口强化（v0.6.0+）
+
+v0.6.0 起围绕「审核可信度」与「失败关闭（fail-closed）」做了三类卡口硬化，配套新命令 `specmint adopt` / `specmint lint`：
+
+**1. 未纳管文件拒绝执行（fail-closed）**
+
+旧行为：`run` 把「无 meta.json 的 spec 文件」当成「不需要裁决也能跑」静默放行 —— 这是 fail-open 漏洞，等于绕过整个裁决流程。
+
+v0.6.0 行为：任何路径形态（单文件、glob、绝对路径、反斜杠）只要不在 `caseStore`（=无 meta.json），**拒绝执行**并退出码 4（NOT_FOUND），提示「先用 `specmint adopt <file> --priority P0` 纳管」。
+
+> 这一改让 `specmint adopt` 不再是「可选的便利命令」而是 **run 路径的必要前置**：不纳管就不可能跑。这是把卡口语义从「过滤已纳管用例」升级为「未纳管用例一律不可见」。
+
+**2. 审核可信度：内容变更自动回落 pending**
+
+`meta.json` 新增 `contentHash = sha256(spec.ts).slice(0,16)`，每次 `adopt` 时重新计算：
+
+- 用例内容未变 → 保留原 verdict（包括 approved）
+- 内容变化（哪怕只加一行注释） → verdict 自动回落 `pending`，`review.reviewer` / `reviewedAt` 清空
+
+逃生舱：`adopt --keep-verdict`（CI 重纳管场景不强制回落）。
+
+**3. 重复告警去重 + 提示语改进**
+
+`run` 在 verdict 卡口与单文件匹配两个分支都会触发 `list()`，旧实现每次调用都重复打「缺 meta.json」warning，5 条用例触发 10+ 行刷屏。v0.6.0 用进程级 Set 去重，且提示语改为：
+
+> `用例 X 缺少 meta.json，已跳过（纳管：specmint adopt <file> --priority P0）`
+
+——直接把可执行的下一步告诉 agent / 用户。
+
 ---
 
 ## 3. REPL 翻页裁决（默认入口）

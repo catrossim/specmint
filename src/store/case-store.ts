@@ -17,15 +17,16 @@
 import {
   existsSync,
   mkdirSync,
-  readdirSync,
   readFileSync,
-  statSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { dirname, isAbsolute, join, relative as pathRelative, resolve } from 'node:path';
 import { CliError, ExitCode } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
+// 收集逻辑统一到 utils/spec-files.ts：lint / adopt / case-store 共用一套
+// 「什么算用例文件」的判定口径，避免出现「lint 扫得到但 run 跑不到」的漂移。
+import { collectSpecFiles } from '../utils/spec-files.js';
 import { normalizeCaseMeta, normalizeTags } from '../utils/normalize-meta.js';
 import { throwIfInvalid } from '../utils/case-schema.js';
 import type {
@@ -140,6 +141,34 @@ export interface CaseSaveResult {
   meta: CaseMeta;
 }
 
+/** adopt() 的输入（纳管路径：代码已存在，只补元数据） */
+export interface CaseAdoptInput {
+  name: string;
+  description: string;
+  priority?: Priority;
+  group?: string;
+  module?: string;
+  linkedTickets?: string[];
+  auth?: string;
+  tags?: string[];
+  /** 来源描述（写入 source.input），如 adopt 的调用参数 */
+  sourceInput: string;
+  /** 生成上下文（纳管用例无 LLM 生成过程，填静态值） */
+  generation: CaseSaveInput['generation'];
+  /** spec 内容哈希，用于「已审核用例被修改」检测 */
+  contentHash?: string;
+}
+
+export interface CaseAdoptResult {
+  meta: CaseMeta;
+  /** 是否首次纳管（此前没有 meta.json） */
+  created: boolean;
+  /** 是否因内容变更把 approved 回落为 pending */
+  reopened: boolean;
+  specPath: string;
+  metaPath: string;
+}
+
 export class CaseStore {
   private readonly cwd: string;
   private readonly casesDir: string;
@@ -193,6 +222,24 @@ export class CaseStore {
 
   // --- 读取 ---
 
+  /**
+   * 已警告过的「缺 meta.json」用例集合。
+   *
+   * run 命令会在多个分支里调用 list()（全量派生 / verdict 反查 / 单文件匹配），
+   * 同一个缺 meta 的用例会被重复警告刷屏。这里按进程去重，一次一例。
+   *
+   * 提示语直接给出可执行动作：纳管路径下用户/agent 最需要的就是这条引导。
+   */
+  private readonly missingMetaWarned = new Set<string>();
+
+  private warnOnceMissingMeta(name: string): void {
+    if (this.missingMetaWarned.has(name)) return;
+    this.missingMetaWarned.add(name);
+    logger.warn(
+      `用例 ${name} 缺少 meta.json，已跳过（纳管：specmint adopt <file> --priority P0）`,
+    );
+  }
+
   exists(name: string): boolean {
     return existsSync(this.specPath(name)) && existsSync(this.metaPath(name));
   }
@@ -236,7 +283,7 @@ export class CaseStore {
       // meta 与 spec 同目录
       const metaFile = specFile.replace(/\.spec\.ts$/, '.meta.json');
       if (!existsSync(metaFile)) {
-        logger.warn(`用例 ${name} 缺少 meta.json，跳过`);
+        this.warnOnceMissingMeta(name);
         continue;
       }
 
@@ -534,6 +581,135 @@ export class CaseStore {
   }
 
   /**
+   * 纳管已存在的 spec.ts：只写 meta.json，**绝不触碰 spec.ts 代码**。
+   *
+   * 与 save() 的分工：
+   * - save() 是「生成路径」：LLM 产出的代码与元数据一起落盘
+   * - adopt() 是「纳管路径」：代码已由宿主 agent / 人工写好，specmint 只补元数据
+   * adopt 若覆写代码，会把用户调试过的用例冲掉，因此这里只读代码不写代码。
+   *
+   * 幂等语义：
+   * - 首次纳管：创建 meta，`verdict=pending`
+   * - 重复纳管：保留 createdAt / stats / review，只补齐缺失字段（不覆盖已有值）
+   * - `force`：全量覆盖字段（仍保留 createdAt 与 stats）
+   *
+   * 审核可信度（本方案的核心约束）：
+   * - 已 approved 且 spec 内容哈希发生变化 → 自动回落 pending，reopened=true
+   * - 刻意如此设计：审核通过的用例被改了，就不再是当初被审核通过的那一个
+   * - 逃生舱：`keepVerdict: true` 时跳过回落（CI 重纳管等场景）
+   */
+  adopt(
+    input: CaseAdoptInput,
+    options: { force?: boolean; keepVerdict?: boolean } = {},
+  ): CaseAdoptResult {
+    this.validateName(input.name);
+
+    const specFile = this.specPath(input.name);
+    if (!existsSync(specFile)) {
+      throw new CliError({
+        code: ExitCode.NOT_FOUND,
+        message: `用例 ${input.name} 的 spec.ts 不存在：${specFile}`,
+        hint: 'adopt 只纳管已存在的 spec 文件，不会创建用例；生成新用例请用 `specmint generate`',
+      });
+    }
+
+    const { value: normalized, warnings } = normalizeCaseMeta({
+      priority: input.priority,
+      tags: input.tags,
+      group: input.group,
+      module: input.module,
+      linkedTickets: input.linkedTickets,
+      auth: input.auth,
+    });
+    for (const w of warnings) logger.warn(`[case:${input.name}] ${w}`);
+
+    if (normalized.priority === null) {
+      throw new CliError({
+        code: ExitCode.USAGE_ERROR,
+        message: `用例 ${input.name} 缺少 priority（必须 P0|P1|P2|P3 之一）`,
+        hint: '用 --priority 显式指定，或在 spec.ts 头部写 `// @specmint priority: P0`',
+      });
+    }
+
+    const candidateMeta: Partial<CaseMeta> = {
+      name: input.name,
+      description: input.description,
+      priority: normalized.priority,
+      group: normalized.group ?? undefined,
+      module: normalized.module ?? undefined,
+      linkedTickets: normalized.linkedTickets.length > 0 ? normalized.linkedTickets : undefined,
+      auth: normalized.auth ?? undefined,
+      tags: normalized.tags,
+    };
+    throwIfInvalid(candidateMeta);
+
+    ensureDir(dirname(specFile));
+    const metaFile = this.metaPath(input.name);
+    const existing = this.get(input.name);
+    const now = new Date().toISOString();
+
+    let meta: CaseMeta;
+    if (!existing || options.force) {
+      meta = {
+        name: input.name,
+        description: input.description,
+        priority: normalized.priority,
+        group: normalized.group ?? undefined,
+        module: normalized.module ?? undefined,
+        linkedTickets: normalized.linkedTickets.length > 0 ? normalized.linkedTickets : undefined,
+        auth: normalized.auth ?? undefined,
+        tags: dedupe(normalized.tags),
+        createdAt: existing?.createdAt ?? now,
+        updatedAt: now,
+        source: { type: 'imported', input: input.sourceInput },
+        generation: input.generation,
+        pageObject: existing?.pageObject ?? { enabled: false, file: null },
+        stats: existing?.stats ?? emptyStats(),
+        review: existing?.review ?? { verdict: 'pending' as const },
+        ...(input.contentHash ? { contentHash: input.contentHash } : {}),
+      };
+    } else {
+      // 幂等更新：已有值优先，只补缺失字段
+      meta = {
+        ...existing,
+        description: input.description || existing.description,
+        priority: existing.priority ?? normalized.priority,
+        group: existing.group ?? normalized.group ?? undefined,
+        module: existing.module ?? normalized.module ?? undefined,
+        linkedTickets:
+          existing.linkedTickets ??
+          (normalized.linkedTickets.length > 0 ? normalized.linkedTickets : undefined),
+        auth: existing.auth ?? normalized.auth ?? undefined,
+        tags: existing.tags.length > 0 ? existing.tags : dedupe(normalized.tags),
+        updatedAt: now,
+        ...(input.contentHash ? { contentHash: input.contentHash } : {}),
+      };
+    }
+
+    // 审核可信度：内容变更且已 approved → 回落 pending（清空裁决人/时间）
+    const reopened =
+      !options.keepVerdict &&
+      !!input.contentHash &&
+      existing?.review?.verdict === 'approved' &&
+      !!existing.contentHash &&
+      existing.contentHash !== input.contentHash;
+    if (reopened) {
+      meta.review = { verdict: 'pending' as const };
+    }
+
+    try {
+      writeFileSync(metaFile, JSON.stringify(meta, null, 2) + '\n', 'utf-8');
+    } catch (err) {
+      throw new CliError({
+        code: ExitCode.IO_ERROR,
+        message: `纳管用例 ${input.name} 失败：${(err as Error).message}`,
+      });
+    }
+
+    return { meta, created: !existing, reopened, specPath: specFile, metaPath: metaFile };
+  }
+
+  /**
    * 覆盖 spec.ts 与 POM（用于 heal/regenerate 场景）
    */
   updateCode(
@@ -651,44 +827,6 @@ export class CaseStore {
 
 function ensureDir(path: string): void {
   if (!existsSync(path)) mkdirSync(path, { recursive: true });
-}
-
-/**
- * 递归收集目录树下所有 .spec.ts 文件绝对路径。
- * - 跳过 pages/ 子目录（POM 不属于用例）
- */
-function collectSpecFiles(rootDir: string): string[] {
-  const out: string[] = [];
-
-  function walk(dir: string): void {
-    let entries: string[];
-    try {
-      entries = readdirSync(dir);
-    } catch {
-      return;
-    }
-    for (const entry of entries) {
-      const full = join(dir, entry);
-      let stat;
-      try {
-        stat = statSync(full);
-      } catch {
-        continue;
-      }
-      if (stat.isDirectory()) {
-        // 跳过 Page Object 目录与运行产物目录
-        // 大小写不敏感：NTFS 默认大小写不敏感，但用户目录名可能是 Pages / NODE_MODULES
-        const lower = entry.toLowerCase();
-        if (lower === 'pages' || lower === 'node_modules' || entry.startsWith('.')) continue;
-        walk(full);
-      } else if (stat.isFile() && entry.endsWith('.spec.ts')) {
-        out.push(full);
-      }
-    }
-  }
-
-  walk(rootDir);
-  return out;
 }
 
 function safeUnlink(path: string): void {
