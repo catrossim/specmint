@@ -54,7 +54,7 @@ export interface ResolvedAuth {
   headerKeys?: string[];
 }
 
-/** `.specmint/auth/storage/` 默认目录（与 `auth login` 子命令约定一致）。 */
+/** `.specmint/auth/storage/` 默认目录（与 `auth init` / `auth refresh` 子命令约定一致）。 */
 const AUTH_STORAGE_DIR = '.specmint/auth/storage';
 
 /**
@@ -84,7 +84,7 @@ export function resolveAuth(
     if (!existsSync(path)) {
       throw new Error(
         `[auth] storageState 不存在: ${path}\n` +
-          `请先运行: specmint auth login --role ${cliRole}`,
+          `请先运行: specmint auth refresh ${cliRole}（首次使用需先 specmint auth init ${cliRole} 生成 setup 模板）`,
       );
     }
     return {
@@ -101,7 +101,7 @@ export function resolveAuth(
     if (!existsSync(expanded)) {
       throw new Error(
         `[auth] config.auth.storageState 指向的文件不存在: ${expanded}\n` +
-          `请检查 config 或运行: specmint auth login`,
+          `请检查 config 或运行: specmint auth refresh <role>`,
       );
     }
     return {

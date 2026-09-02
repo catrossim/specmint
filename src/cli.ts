@@ -150,7 +150,7 @@ program
   .option(
     '--auth <role>',
     '显式指定登录态角色（覆盖 config.auth.storageState）。对应 `.specmint/auth/storage/<role>.json`，' +
-      '文件不存在时会 fail-fast 提示 `specmint auth login --role <name>`。未传则按 ' +
+      '文件不存在时会 fail-fast 提示 `specmint auth refresh <name>`。未传则按 ' +
       'config.auth.storageState > headers/cookies > 未登录态 顺序解析。',
   )
   .option(

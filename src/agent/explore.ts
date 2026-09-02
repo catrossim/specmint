@@ -44,7 +44,7 @@ export interface ExploreOptions {
   };
   /**
    * Playwright `storageState` 路径（绝对或相对 cwd）。
-   * 通常由 `specmint auth login --role <role>` 产出，未设置则保持未登录态。
+   * 通常由 `specmint auth refresh <role>` 产出，未设置则保持未登录态。
    * 注：Playwright 的 storageState 包含 cookies + localStorage，覆盖力比单传 headers 更强。
    */
   storageState?: string;

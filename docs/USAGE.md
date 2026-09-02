@@ -1,9 +1,11 @@
-# specmint 使用文档（v2.7）
+# specmint 使用文档（v0.7.0）
 
 面向测试工程师的完整使用指南。
 
 > v2.7 增量 A（v0.5.1）：Windows 全平台兼容（spawn / 路径 / reviewer / NTFS / 构建脚本 5 处 P0/P2 修复）。
 > v2.7 增量 B（v0.5.2）：`run` / `rerun` 执行集修复——verdict 卡口开启时全量跑与派生分支不再报 "No tests found"、`rerun` 多条失败用例修复、嵌套同名串扰修复、单文件直传路径卡口修复。
+> **v0.6.0**：定位转向「Playwright 用例生命周期管理」——新增 `adopt`（纳管已存在的 spec.ts）与 `lint`（静态校验），未纳管文件拒绝执行，已审核用例内容变更自动回落 pending。
+> **v0.7.0**：新增 `verify`（静态可达性校验，退出码 15）、`.specmint/lint-rules.json`（lint severity 覆盖）、auth 运维四命令（`doctor` / `debug` / `lint` / `matrix`），并细化 `run --auth` 的退出码语义。
 > 详见 [§13 升级指南](#13-升级指南)。
 
 ## 1. 项目布局
@@ -147,6 +149,10 @@ my-project/
 | `linkedTickets` | 否 | 字符串数组 |
 | `auth` | 否 | 引用 `auth/<name>.setup.ts` 产物 |
 | `tags` | 否 | 小写 kebab-case 数组 |
+| `source.type` | 是 | `generated`（LLM 起草）/ `manual` / `imported`（`adopt` 纳管） |
+| `contentHash` | 否 | `sha256(spec.ts).slice(0,16)`，由 `adopt` 写入；用于检测「已裁决用例被改动」，缺失时跳过检测（兼容历史 meta） |
+| `review.verdict` | 否 | 人工裁决结果，缺失视为 `pending`；`pending\|approved\|needs-fix\|rejected\|skipped` |
+| `review.reviewer` / `reviewedAt` | 否 | 裁决人与时间；内容变更回落 pending 时会被清空 |
 
 ### 用例名分组
 
@@ -214,6 +220,77 @@ specmint show auth/login-success
 specmint delete auth/login-success
 ```
 
+### 纳管与静态校验（v0.6.0+ / v0.7.0+）
+
+外部写好的 spec.ts（宿主 agent、人工、旧项目迁移）必须先 `adopt` 纳管，否则 `caseStore.list()` 会静默跳过它，`run` / `review` / verdict 卡口全都看不见。
+
+```bash
+# 纳管：只写 meta.json，绝不改动 spec.ts 代码
+specmint adopt .specmint/cases/auth/login-success.spec.ts --priority P0
+specmint adopt "auth/**/*.spec.ts" --priority P1          # glob 批量
+specmint adopt --priority P2 --module 订单管理            # 整个用例库
+specmint adopt <file> --priority P0 --group auth --tag smoke --ticket AUTH-101
+specmint adopt <file> --priority P0 --auth admin          # 关联登录态角色
+specmint adopt <file> --priority P0 --no-lint             # 跳过校验（仅存量迁移）
+specmint adopt <file> --priority P0 --keep-verdict        # 内容变更时不回落 pending
+specmint adopt <file> --priority P0 --force               # 全量覆盖已有字段（默认只补缺失）
+```
+
+行为要点：
+
+- 元数据优先级：**CLI 参数 > spec.ts 头部 `@specmint xxx:` 注释 > 文件路径推导**
+- 缺 `priority` → 拒绝纳管（`missing-priority`）；`--group` 与文件所在目录不一致 → 拒绝（`group-mismatch`）
+- 默认跑 lint：error 拒绝入仓，warn 打印后放行
+- 幂等：重复 adopt 只补缺失字段，保留裁决历史与运行统计
+- 已 `approved` 的用例内容变更（`contentHash` 变化）→ 自动回落 `pending`，`--keep-verdict` 可保留
+
+```bash
+# 静态校验（风格）：只校验不纳管
+specmint lint                          # 整个用例库
+specmint lint "auth/**/*.spec.ts"      # glob
+specmint lint --strict                 # warning 也视为失败（退出码 9）
+
+# 静态可达性（逻辑）：lint 之上、run 之下，不启动浏览器
+specmint verify                        # 退出码 15 = VERIFY_FAILED
+specmint verify "auth/**/*.spec.ts"
+```
+
+`lint` 规则（默认 severity）：
+
+| 规则 id | 级别 | 含义 |
+|---|---|---|
+| `missing-playwright-import` | error | 必须 `import { test, expect } from '@playwright/test'` |
+| `no-test-block` | error | 至少有一个 `test(...)` 块 |
+| `no-assertion` | error | 至少有一个具体 matcher |
+| `wait-for-timeout` | error | 禁用 `page.waitForTimeout()` |
+| `brittle-selector` | error | 禁用 `nth-child` / `xpath=` / 后代选择器 / 属性选择器 |
+| `debug-leftover` | warn | 禁止 `console.*` / `debugger` |
+| `unknown-testid` | warn | `data-testid` 未在 `.specmint/contract.json` 声明 |
+
+`verify` 规则（v0.7.0 上线两条）：`empty-test-body`（空 test 体）与 `locator-not-in-contract`（`getByTestId('x')` 的 `x` 不在契约 testIds 内）。已知留白：编译检查 / 路径可达性 / 缺 await 检测。
+
+> `group-mismatch` 与 `missing-priority` 由 `adopt` 内联产出，不在上表中，因此**不参与**下面的 severity 覆盖，也不会被 `lint` 命令报出。
+
+#### 自定义 lint severity（v0.7.0 起）
+
+项目根放 `.specmint/lint-rules.json`（位置固定），`adopt` 与 `lint` 共用：
+
+```json
+{
+  "extends": "specmint:recommended",
+  "rules": {
+    "debug-leftover": "error",
+    "wait-for-timeout": "warn",
+    "brittle-selector": "off"
+  }
+}
+```
+
+- value：`error`（升级）/ `warn`（降级）/ `off`（禁用）
+- 文件不存在 → 默认行为不变；未知规则 id → warn 后忽略；非法 value → `IO_ERROR`
+
+CI 推荐链路（从廉到贵逐层 fail-fast）：`specmint lint && specmint verify && specmint run`。
+
 ### 登录态（auth 子系统）
 
 ```bash
@@ -222,6 +299,19 @@ specmint auth generate "<desc>" --name admin    # PI 生成
 specmint auth refresh admin            # 重跑 setup → 生成 storageState
 specmint auth list                     # 列所有 setup + 状态
 ```
+
+#### auth 运维四命令（v0.7.0 新增）
+
+```bash
+specmint auth doctor                          # 一行诊断所有 role：过期 / 缺断言 / 域名不匹配
+specmint auth doctor --expiry-hours 48        # 自定义过期阈值（默认 24h）
+specmint auth debug admin                     # headed + 慢动作跑 setup，人工观察登录过程
+specmint auth lint                            # 静态扫 setup：明文密码 / 缺 storageState() / 缺断言
+specmint auth matrix --roles admin,editor     # 多角色矩阵跑同一批用例 + pass/fail 对比表
+specmint auth matrix --grep "登录"            # 只跑匹配标题的用例
+```
+
+退出码：`doctor` 有告警 → `1`（可直接作 CI gate）；`lint` 命中「缺 storageState 调用 / 缺成功断言 / 产物不存在」→ `13`；`refresh` 与 `debug` 登录失败 → `12`；`matrix` 任一角色失败 → `7`。详见 [§11 退出码](#11-退出码)。
 
 ### 运行
 
@@ -515,6 +605,16 @@ specmint history --limit 5
 | 6 (AGENT_ERROR) | PI 调用失败 |
 | 7 (TEST_FAILED) | 测试失败 |
 | 8 (IO_ERROR) | IO 错误 |
+| 9 (LINT_FAILED) | 静态校验未通过（`lint`；`adopt` 内的 error 红线同样拒绝纳管） |
+| 10 (AUTH_NOT_FOUND) | auth 子系统的 storageState 文件缺失 |
+| 11 (AUTH_EXPIRED) | storageState 缺失 / 距上次刷新超过阈值；`run --auth` 命中即早返 |
+| 12 (AUTH_LOGIN_FAILED) | setup 文件登录步骤失败（`auth refresh` / `auth debug` 子进程非 0 退出） |
+| 13 (AUTH_INCOMPLETE_SETUP) | setup 文件缺 `storageState()` 调用或成功断言（`auth lint` 检出） |
+| 14 (AUTH_DOMAIN_MISMATCH) | Cookie 域名与 `runner.baseURL` 不匹配 |
+| 15 (VERIFY_FAILED) | 静态可达性校验未通过（`verify`，v0.7.0 新） |
+
+> `10-14` 为 auth 子系统保留段，全部常量见 `src/utils/errors.ts`。
+> `auth doctor` 有告警时统一退 `1`（GENERIC_ERROR），便于直接作 CI gate；具体归因看它的输出行。
 
 ## 12. 常见问题
 
@@ -687,6 +787,57 @@ specmint generate "<desc>" --url https://example.com/dashboard
 - 嵌套同名用例（`login-success` 与 `auth/login-success`）互不串扰，`specmint run login-success` 只跑根级那条
 - `specmint run <绝对路径或反斜杠路径>` 现在会正确走 verdict 卡口（此前静默跳过检查）
 
+### v0.5.2 → v0.6.0（用例生命周期管理）
+
+定位转向：用例就是**标准 Playwright TS 代码**，specmint 负责纳管、校验、裁决、执行、归档，不再强依赖 LLM 起草。
+
+新增：
+
+1. `specmint adopt [target]` —— 把已存在的 spec.ts 纳管进库（只写 `meta.json`，不动代码）。见 [§4 纳管与静态校验](#纳管与静态校验v060--v070)
+2. `specmint lint [target]` —— 静态校验规则化（退出码 `9`），`adopt` 内部调用同一套规则
+3. 审核可信度 —— `meta.json` 新增 `contentHash`，已 `approved` 用例内容变更自动回落 `pending`（`--keep-verdict` 可保留）
+
+行为变化（需要注意）：
+
+- **未纳管文件拒绝执行**：`run` / `rerun` 接到不在 `caseStore` 的 spec 路径（无 `meta.json`）时**拒绝执行**并退 `4`，不再静默放行
+- 提示语改为 `已跳过（纳管：specmint adopt <file> --priority P0）`，且同一条不再重复告警
+
+升级步骤：
+
+1. 拉取 `npm i specmint@0.6.0`
+2. 存量用例逐条纳管：`specmint adopt --priority P1`（整库）
+3. 校验：`specmint lint`；CI 里把 `specmint run` 的退出码 `4` 视为「流程未完成」而非「测试通过」
+
+### v0.6.0 → v0.7.0（静态可达性 + auth 运维）
+
+完全向后兼容，零迁移成本。
+
+新增：
+
+1. `specmint verify [target]` —— 静态可达性校验（lint 之上、run 之下，不启动浏览器），退出码 `15`
+2. `.specmint/lint-rules.json` —— lint 规则 severity 覆盖（`error` / `warn` / `off`），`adopt` 与 `lint` 共用
+3. auth 运维四命令 `doctor` / `debug` / `lint` / `matrix`，与 auth 细分退出码 `10-14`（见 [§11 退出码](#11-退出码)）
+
+行为变化：
+
+- `run --auth <name>` 现在区分「名字拼错」（`4`）与「storageState 缺失」（`11`），并在进入 Playwright 之前早返，不再把错误推迟成 `7` + 模糊的 `Cannot find module`
+- `run --auth <name>` 无显式目标时按 `meta.auth` 过滤执行集；有显式目标（pattern / `--grep`）时只注入登录态并打印语义警告
+
+可选动作：
+
+```bash
+# 1. 可选：启用 lint severity 覆盖
+cat > .specmint/lint-rules.json <<'JSON'
+{ "extends": "specmint:recommended", "rules": { "debug-leftover": "error" } }
+JSON
+
+# 2. 可选：CI 加一道 lint 与 run 之间的卡口
+npx specmint lint && npx specmint verify && npx specmint run --priority P0
+
+# 3. 可选：登录态健康前置检查
+npx specmint auth doctor || exit 1
+```
+
 ---
 
 ## 附录 A：Playwright 版本对应
@@ -695,6 +846,7 @@ specmint generate "<desc>" --url https://example.com/dashboard
 |---|---|---|
 | v0.1.0 – v0.2.x | `@playwright/test` ^1.40 | 经典双 layer 架构 |
 | v0.3.0+        | `@playwright/test` ^1.40 | 包内 `playwright.config.ts`，executor 通过 `import.meta.url` 定位 |
+| v0.6.0+        | `playwright` / `@playwright/test` ≥ 1.58.0（**peer 依赖**，用户项目自定版本） | specmint 不再锁定版本，executor 调 cwd 的 `npx playwright test`；`init` 会检测缺失并给出安装建议 |
 
 升级 specmint 到 v0.3.0+ 不要求用户项目再持有 `playwright.config.ts`，但若有自定义项（如视口 / trace 开关），可在用户项目根目录新建 `playwright.config.ts`，executor 会自动 `--config <用户配置>` 优先于包内配置。
 

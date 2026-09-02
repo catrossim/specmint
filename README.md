@@ -110,6 +110,7 @@ npx specmint generate \
 
 ```bash
 npx specmint lint                            # 静态校验（adopt 时默认已跑过）
+npx specmint verify                          # 静态可达性（v0.7.0 新，空 test 体 / 契约外 testId）
 npx specmint review                          # REPL 翻页裁决（a/p/n/r/s/q 单键）
 npx specmint review set auth/login-success --verdict approved
 npx specmint run                             # 仅跑 verdict=approved（卡口默认开启）
@@ -149,7 +150,7 @@ npx specmint run                             # 仅跑 verdict=approved（卡口�
 | `review list\|set\|show` | 人工裁决 / REPL 翻页（见 [docs/review.md](./docs/review.md)） |
 | `skill export [--install]` | **（v0.6.0 重写）** 批量导出 4 个 skill（specmint / author / operate / auth），含 `_shared` 片段拼接；`--install` 一键装到 `.codebuddy/skills/` 或 `.claude/skills/` |
 | `models list\|current\|select` | 切换 agent model（数据源：pi-coding-agent） |
-| `auth list\|init\|refresh\|generate` | 管理 auth 角色（登录态 / 持久化） |
+| `auth list\|init\|refresh\|generate\|doctor\|debug\|lint\|matrix` | 管理 auth 角色（登录态 / 持久化 / 运维诊断，见 §3.2） |
 
 ### 3.1 最常用的 5 条命令
 
@@ -171,7 +172,7 @@ npx specmint rerun
 npx specmint heal auth/login-success
 ```
 
-### 3.2 auth 子命令速查表（v0.6.0 新增）
+### 3.2 auth 子命令速查表（v0.7.0 新增四命令）
 
 目标 URL 需要登录时，**业务 spec 不需要写任何 auth 配置**——specmint 在 runner 层自动注入 `storageState`。你只需要把登录步骤做成 setup 文件，specmint 帮你复用 Cookie 到所有用例。
 
@@ -206,7 +207,7 @@ npx specmint run --auth editor           # CLI 覆盖 config
 SPECMINT_NO_AUTH=1 npx specmint run      # 完全不走 auth（公开页 demo）
 ```
 
-**关键 UX 改进**（v0.6.0 起）：
+**关键 UX 改进**（v0.7.0 起）：
 
 - `auth doctor` 在跑测前发现 4 类常见问题：storageState 缺失 / 过期（>24h） / Cookie 域名与 baseURL 不匹配 / setup 文件缺断言。退出码 1 让 CI 可用作 gate。
 - `auth lint` 把 setup 文件的 4 类违规标出来：明文密码（启发式 warn）/ 缺 `storageState()` 调用 / 缺 `expect(page).toHaveURL(...)` / storageState 不存在。
@@ -229,7 +230,7 @@ SPECMINT_NO_AUTH=1 npx specmint run      # 完全不走 auth（公开页 demo）
 | [**examples/e2e-verify.md**](./examples/e2e-verify.md) | 从零接入真实业务项目的完整 6 步流程（含 CI / FAQ） |
 | [**examples/login-flow.spec.ts**](./examples/login-flow.spec.ts) | 手写用例样例：spec 结构 / 语义定位器 / 用例分组 |
 | [**examples/with-auth/**](./examples/with-auth/) | **v0.5.0 新增**：generate 登录态注入端到端演示（`--auth <role>` 覆盖 / 缓存指纹隔离 / `generation.usedAuth` 审计） |
-| [**CHANGELOG.md**](./CHANGELOG.md) | 版本变更记录（v0.1.0 → v0.5.2） |
+| [**CHANGELOG.md**](./CHANGELOG.md) | 版本变更记录（v0.1.0 → v0.7.0） |
 
 ---
 
@@ -245,6 +246,8 @@ SPECMINT_NO_AUTH=1 npx specmint run      # 完全不走 auth（公开页 demo）
     - 退出码 `15 = VERIFY_FAILED`
     - 已知留白：编译检查（TS 7 移除程序化 API）/ 路径可达性（需 contract.routes）/ 缺 await 检测
   - **`.specmint/lint-rules.json`**（新配置）：lint 规则 severity 覆盖（`error` / `warn` / `off`），被 `adopt` 与 `lint` 共用，文件不存在视为「无覆盖」（默认行为不变）
+  - **auth 运维四命令**（新命令）：`doctor`（一行诊断：过期 / 缺断言 / Cookie 域名不匹配，有问题退 1）/ `debug <name>`（headed 慢动作逐步看登录过程）/ `lint`（静态扫 setup：明文密码 / 缺 `storageState()` / 缺成功断言，退 13）/ `matrix [--roles a,b]`（多角色矩阵跑 + pass/fail 对比表，失败退 7）
+  - **`run --auth <role>` 执行集语义补全**：无显式目标时按 `meta.auth === <role>` 过滤执行集 + 自动注入 `storageState`；有显式目标（pattern / `--grep`）时只注入登录态并打印语义警告
   - **`run --auth <name>` 退出码细化**（关键修复）：现在区分
     - `NOT_FOUND (4)`：名字拼错（`listAuth()` 中没注册）
     - `AUTH_EXPIRED (11)`：role 已注册但 `.specmint/auth/storage/<role>.json` 缺失/失效

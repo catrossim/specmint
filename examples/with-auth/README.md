@@ -137,26 +137,39 @@ cat .specmint/cases/order-dashboard.spec.json | jq .generation
 
 **不存 token / cookie value**——三个月后回看用例时知道当时用了哪个登录态，但 git 历史里没有 secret 泄露。
 
-## 与 `specmint auth login` 的边界
+## 与正式登录态流程的边界
 
 本示例用预录的 storageState 是为了"零依赖可复现"。**生产项目请走正式流程**：
 
 ```bash
-# 真实登录态获取（弹出浏览器让你交互式登录）
-specmint auth login --role admin
+# 1. 生成 setup 模板并手写登录步骤
+specmint auth init admin
+# → .specmint/auth/admin.setup.ts
+
+# 2. 跑一次 setup，生成 storageState
+ADMIN_PASSWORD=xxx specmint auth refresh admin
 # → .specmint/auth/storage/admin.json
 
-# 列出已记录的 role
+# 3. 列出已注册的 role（含上次刷新时间 / Cookie 数 / setup 完整性）
 specmint auth list
 ```
 
-预录文件过期 / 凭据变更 / 服务器对 cookie 加密时，预录版本会失效——这正是用 `auth login` 的价值。
+预录文件过期 / 凭据变更 / 服务器对 cookie 加密时，预录版本会失效——这正是走正式流程的价值。
+
+**v0.7.0 起**可用运维命令定位登录态问题：
+
+```bash
+specmint auth doctor          # 一行诊断：过期 / 缺断言 / Cookie 域名与 baseURL 不匹配
+specmint auth lint            # 静态扫 setup：明文密码 / 缺 storageState() / 缺成功断言
+specmint auth debug admin     # headed + 慢动作逐步看登录过程
+specmint auth matrix --roles admin,viewer   # 多角色矩阵跑 + pass/fail 对比表
+```
 
 ## 边界与不在范围
 
 本示例不演示：
 
-- **OAuth / SSO 流程编排** —— v0.5.0 不做，仍是交互式 `auth login`
+- **OAuth / SSO 流程编排** —— v0.5.0 不做，仍需手写 `auth init` 生成的 setup 步骤
 - **Token 自动刷新** —— v2.7+ 议题
 - **Playwright projects 多角色拆分**（`.specmint/auth/*.setup.ts`）—— v0.5.0 不动这部分
 - **真实服务端 cookie 校验** —— 本示例用 client-side `<script>` 模拟，生产环境请让 server 端 401/302

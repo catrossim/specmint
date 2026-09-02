@@ -34,6 +34,12 @@ specmint 项目的所有重要变更都会记录在这里。版本号遵循 [Sem
   ```
   未知规则 id → `logger.warn` 后忽略；规则 value 不是 `error`/`warn`/`off` → `CliError(IO_ERROR)`。
   仍不支持运行时 JS plugin（避免引入 Node API 依赖 CLI 体积），仅 JSON 配置级别。
+- **auth 运维四命令**（v0.7.0 新）：此前登录态出问题只能靠人肉排查（storageState 是否过期、setup 是否缺断言、多角色是否都还能过）。新增四条：
+  - `specmint auth doctor [--expiry-hours <n>]` —— 一行诊断所有 role：storageState 缺失 / 过期（阈值默认 24h）/ setup 缺断言 / Cookie 域名与 `runner.baseURL` 不匹配。有问题退 `1`，可直接作 CI 前置 gate
+  - `specmint auth debug <name>` —— headed + 慢动作跑 setup 文件，人工观察登录过程卡在哪一步
+  - `specmint auth lint` —— 静态扫 setup 文件：明文密码（启发式 warn）/ 缺 `page.context().storageState()` 调用 / 缺 `expect(page).toHaveURL(...)` 成功断言 / storageState 产物不存在。命中后三类退 `13 = AUTH_INCOMPLETE_SETUP`
+  - `specmint auth matrix [--roles a,b] [--grep <p>]` —— 多角色矩阵跑同一批用例并输出 pass/fail 对比表；任一角色失败退 `7 = TEST_FAILED`
+- **`run --auth <role>` 执行集语义补全**（v0.7.0）：无显式目标（无 pattern / `--grep` / `--patterns`）时，按 `meta.auth === <role>` 过滤执行集，并自动注入 `storageState = .specmint/auth/storage/<role>.json`；已指定显式目标时 `--auth` 只注入 storageState、不按 `meta.auth` 过滤，并打印语义警告避免误解。退出码 `10-14` 为 auth 子系统保留段（详见 `src/utils/errors.ts`）。
 
 ### 修复（关键）
 
@@ -56,6 +62,10 @@ specmint 项目的所有重要变更都会记录在这里。版本号遵循 [Sem
 - `skills/specmint-author/SKILL.md`：补 `.specmint/lint-rules.json` 配置示例 + `lint` 规则 id 全列表
 - `skills/specmint-auth/SKILL.md`：补 `AUTH_EXPIRED (11)` 与 `NOT_FOUND (4)` 的 `run --auth` 退出码对照表
 - `skills/specmint-operate/SKILL.md`：补 `run --auth <name>` 早返逻辑与修复路径
+- `skills/_shared/contract.md`：退出码表补齐 `9 / 10-15`（该文件会被 4 个 skill 拼接，改一处生效四处）
+- `docs/USAGE.md`：升级到 v0.7.0——§4 新增「纳管与静态校验」小节（`adopt` / `lint` / `verify` + `.specmint/lint-rules.json`）、auth 运维四命令、§3 补 `contentHash` / `review.*` 字段、§11 补退出码 `9-15`、§13 补 v0.6.0 与 v0.7.0 升级指南
+- `examples/`：快速上手与 6 步教程接入 `adopt` + `verify`，CI 示例补 `lint` / `verify` 卡口；`docs/element-contract.md` 说明契约 testId 与 `verify` 的校验关系
+- **提示文案修复**：`auth login` 是一个**不存在的子命令**，但 `generate` / `auth-resolve` 的错误提示与 `examples/with-auth/` 都在引导用户执行它。全部改为 `specmint auth init <role>` + `specmint auth refresh <role>`（`scripts/test-auth.ts` 的断言同步更新）
 
 ### 升级步骤（v0.6.0 → v0.7.0）
 

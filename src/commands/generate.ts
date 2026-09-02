@@ -311,7 +311,8 @@ export async function generateCommand(
   if (resolvedAuth.role === 'none') {
     logger.warn(
       '[auth] 未配置登录态：未设置 config.auth 且未传 --auth <role>。若目标 URL 需要登录，' +
-        '请运行 `specmint auth login --role <name>` 并在 config 中配置 auth.storageState，' +
+        '请运行 `specmint auth init <name>` 生成 setup 模板、`specmint auth refresh <name>` ' +
+        '生成 storageState，再在 config 中配置 auth.storageState，' +
         '或本次加 --auth <role> 覆盖。',
     );
   } else {
@@ -621,7 +622,7 @@ async function runExploreForUrl(
     logger.warn(
       `[auth] 探索结果看起来是登录页（title/url 含 login/signin/oauth/sso 或 password input），` +
         `且本次未注入登录态。生成的用例将基于未登录态页面。` +
-        `建议: specmint auth login --role <name> 后重跑。`,
+        `建议: specmint auth refresh <name> 后重跑。`,
     );
   }
 

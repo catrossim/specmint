@@ -29,6 +29,7 @@ specmint + 元素契约 = 服务员 + 菜单。
 - **对接 AI 生成的前端代码**：很多前端代码已经是 AI 生成的，契约可以让 specmint 直接消费 AI 输出的元素清单
 - **重构抗性**：UI 改样式、加 class、加 wrapper，testid 不变 → 用例不破
 - **可读性**：看测试脚本就知道"这个按钮是干啥的、在哪"
+- **静态校验依据**（v0.7.0 起）：契约里声明的 `testId` 会成为 `specmint verify` 的判定基准——用例里 `getByTestId('x')` 的 `x` 不在契约中即为 error
 
 ### 我一定要用吗？
 
@@ -40,6 +41,16 @@ specmint + 元素契约 = 服务员 + 菜单。
 - 团队 ≥ 3 人
 - 已经在前端代码里大量用 `data-testid`
 - 前端代码由 AI 生成/部分生成
+- 用例里大量使用 `getByTestId()`（v0.7.0 起 `verify` 会逐个比对契约）
+
+**v0.7.0 起的校验关系**：
+
+| 契约状态 | `specmint verify` 的 `locator-not-in-contract` |
+|---|---|
+| 无契约 / `elements: []` | 规则整体跳过（与 `lint` 的 `unknown-testid` 一致，不误报） |
+| 有契约且声明了 testIds | `getByTestId('x')` 中的 `x` 不在声明集合内 → error，退出码 `15` |
+
+也就是说：**没契约不会拦你，一旦写了契约就必须写全**，否则 `verify` 会挡在 `run` 之前。
 - 想让 AI 生成的测试脚本"听指挥"
 
 ---
@@ -388,6 +399,8 @@ await page.getByRole('button', { name: '登录' }).click();           // OK 但�
 ### Q1：契约文件不存在会怎样？
 
 **A**：完全没影响——specmint 静默跳过契约注入，行为与现状字节级一致。契约是**完全可选**的增强机制。
+
+`specmint lint` 的 `unknown-testid` 与 `specmint verify` 的 `locator-not-in-contract` 在无契约时同样整体跳过，不会因"没有契约"而报错。
 
 ### Q2：契约里 `elements: []` 会怎样？
 

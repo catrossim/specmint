@@ -1,5 +1,5 @@
 {
-  "comment": "examples/with-auth/storage/admin.json —— 预录的 Playwright storageState，仅用于演示 specmint generate --auth 链路。真实项目请运行 `specmint auth login --role admin` 自行生成。",
+  "comment": "examples/with-auth/storage/admin.json —— 预录的 Playwright storageState，仅用于演示 specmint generate --auth 链路。真实项目请运行 `specmint auth init admin` + `specmint auth refresh admin` 自行生成。",
 
   "cookies": [
     {

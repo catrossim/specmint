@@ -14,6 +14,12 @@
 | 5 | ALREADY_EXISTS | 重复创建 | 加 `--force` 覆盖，或改用更新路径 |
 | 7 | TEST_FAILED | 用例执行失败 | 查 `history`，必要时 `heal` |
 | 9 | LINT_FAILED | 静态校验未通过 | 修 spec 后重新 `adopt`（不要 `--no-lint` 绕过） |
+| 10 | AUTH_NOT_FOUND | storageState 文件缺失 | `specmint auth refresh <role>` 重生成 |
+| 11 | AUTH_EXPIRED | storageState 缺失 / 距上次刷新超过阈值 | `specmint auth refresh <role>`；或 `--no-auth` 跳过 |
+| 12 | AUTH_LOGIN_FAILED | setup 文件登录步骤失败（子进程非 0 退出） | `specmint auth debug <role>` 人工观察登录过程 |
+| 13 | AUTH_INCOMPLETE_SETUP | setup 文件缺 `storageState()` 调用 / 缺登录成功断言（`auth lint` 检出） | 补 `await page.context().storageState({ path })` 与 `expect(page).toHaveURL(...)` |
+| 14 | AUTH_DOMAIN_MISMATCH | Cookie 域名与 `config.baseURL` 不匹配 | 核对 `runner.baseURL` 与登录域名 |
+| 15 | VERIFY_FAILED | 静态可达性校验未通过（`verify`） | 补 test 体内容 / 把 testId 写进 `.specmint/contract.json` |
 
 ### CI 集成要点
 

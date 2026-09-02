@@ -95,9 +95,9 @@ assertThrows(
   /storageState 不存在.*ghost/,
 );
 assertThrows(
-  '提示信息包含 specmint auth login',
+  '提示信息指向真实存在的 specmint auth refresh',
   () => resolveAuth(undefined, 'ghost', tmp),
-  /specmint auth login/,
+  /specmint auth refresh/,
 );
 
 process.stdout.write('\n[3] config.auth.storageState 命中\n');

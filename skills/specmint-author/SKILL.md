@@ -173,6 +173,8 @@ setup 文件本身的静态校验见 `specmint auth lint <name>`（明文密码 
 
 不在以上列表的 rule id 在配置文件中会被静默忽略（带 warn）。
 
+> `group-mismatch`（`--group` 与文件目录不一致）与 `missing-priority`（缺 priority）由 `adopt` 内联产出，**不在上表中**：它们不能被 `.specmint/lint-rules.json` 覆盖，也不会被 `specmint lint` 报出（只会在 adopt 时拒绝纳管）。
+
 **不支持**运行时 JS plugin（避免引入 Node API 依赖 CLI 体积），仅 JSON 配置级别。
 
 ---
