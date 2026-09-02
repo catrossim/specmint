@@ -4,7 +4,7 @@ specmint 项目的所有重要变更都会记录在这里。版本号遵循 [Sem
 
 ## 版本说明
 
-- **当前发布版本**：`0.5.1`（内部 v2.7 增量，详见 [0.5.1] 段）
+- **当前发布版本**：`0.5.2`（内部 v2.7 增量，详见 [0.5.2] 段）
 - 内部迭代以 `v2` / `v2.1` / `v2.2` / `v2.3` / `v2.4` / `v2.5` / `v2.6` / `v2.7` 标识，本文件作为对外权威变更日志。
 - 自 `0.1.0` 起，每个 npm release 都会在此新增一段 `## [x.y.z] - YYYY-MM-DD`。
 
@@ -199,6 +199,25 @@ npx specmint run --config ./my-playwright.config.ts
 # 强制使用系统 Chrome（跳过 auto 检测）
 # 在 config.json 里设 runner.browserChannel: "chrome"
 ```
+
+---
+
+## [0.5.2] - 2026-09-02
+
+`specmint run` 的 "No tests found" 根因修复与 review verdict 卡口加固（代码审查修复版）。
+
+### Fixed
+
+- **`run`：全量 / 派生场景 "No tests found"（P0）**——review verdict 卡口开启（`review.requireBeforeRun=true`）时，全量跑、`--priority` / `--auth` / `--module` / `--group`、pattern 多匹配等派生分支原先把 case 内部名经 `--grep` 传给 Playwright，但 `--grep` 只匹配测试 full title（中文场景名），任何平台都永远匹配不到。现改用 `patterns`（多个 positional args，按文件路径正则匹配），与 `<casesDir>/<name>.spec.ts` 一一对应。
+- **`rerun`：多条失败用例必挂（P0）**——失败用例名列表原先用空格 join 成单个 pattern 传给 Playwright（单个 argv 元素、含空格的"路径正则"），多条失败用例时必报 "No tests found"。现改为 patterns 数组逐条传递。
+- **嵌套同名误执行（P1）**——`login-success` 与 `auth/login-success` 并存时，`<name>.spec.ts` 形式的 pattern 会作为后缀子串误命中嵌套同名文件。pattern 现一律用完整 `specPath`（相对 cwd、正斜杠）+ 逐字符转义 + `$` 锚定生成，互不串扰。
+- **单名分支 verdict 反查撞车（P1）**——pattern 收敛到单个用例时，下方"单文件模式"gate 按文件名 `endsWith` 反查会在嵌套同名场景误拦 / 误放。现单名分支内联完成 verdict 判定（blocked 已在匹配时过滤，非 approved 就地提示），跳过反查。
+- **单文件直传在 Windows 反斜杠 / 绝对路径 / macOS `/tmp` 软链下 gate 静默失效（P2）**——`specmint run cases\auth\x.spec.ts` 或传绝对路径时，verdict 反查按字面字符串比较命不中；macOS 上 `/tmp` 是 `/private/tmp` 的软链，process.cwd() 与用户传入的 `/tmp/...` 跨根，`pathRelative` 会算出 `../../../tmp/...` 这种鬼东西。现统一 realpath 化 cwd 与用户路径后再 resolve → relative → 正斜杠归一化；命中不到库内用例时给出提示（原先静默跳过检查）。
+- **executor `pattern` / `patterns` 并存防御（P2）**——两者同时传入时 positional args 会取并集、静默扩大执行集；现 patterns 优先并告警忽略 pattern。
+
+### 内部
+
+- 兜底 verdict gate 由"字符串反解 pattern"改为按 `specPath` 精确反查（pattern ↔ specPath 一一对应），消除反解转义 regex 的脆弱性；不在库内的 pattern 原样保留交 Playwright 匹配。
 
 ---
 

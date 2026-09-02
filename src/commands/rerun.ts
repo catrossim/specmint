@@ -4,7 +4,7 @@
  * 行为：
  *   - 默认从最近一次 run 提取失败用例名集合
  *   - --from <runId> 指定来源 run
- *   - 把失败名转换为 Playwright pattern："<name>.spec.ts <name2>.spec.ts ..."
+ *   - 把失败名转换为 Playwright patterns：["<name>.spec.ts", "<name2>.spec.ts", ...]（多个 positional args）
  *
  * P1 verdict 卡口（与 run 共用同一套过滤规则）：
  *   - 预筛 failedNames，按 config.review.blockedOnRun 减去 --include-* 解禁项
@@ -91,15 +91,16 @@ export async function rerunCommand(options: RerunOptions): Promise<void> {
     }
   }
 
-  // playwright CLI pattern：空格分隔多个 spec 文件
-  const pattern = toRerun.map((n) => `${n}.spec.ts`).join(' ');
-
   if (!options.json) {
     logger.info(`重跑 ${toRerun.length} 个用例: ${toRerun.join(', ')}`);
   }
 
   const result = await runTests({
-    pattern,
+    // 多个 positional args（每个是文件路径正则），不要用空格 join 成单个 pattern：
+    // JS 里 join(' ') 得到的是单个 argv 元素（含空格的字符串），Playwright 会把它当成
+    // 一个"路径中带空格"的正则去匹配，永远命不中任何文件 → "No tests found"。
+    // shell 里空格分隔多文件是 shell 展开成多个 argv 的行为，spawn 直传时必须用数组。
+    patterns: toRerun.map((n) => `${n}.spec.ts`),
     cwd,
     casesDir: storage.casesDir,
     reportsDir: storage.reportsDir,

@@ -30,6 +30,12 @@ verdict 状态机共 5 态：`pending` / `approved` / `needs-fix` / `rejected` /
 | `specmint rerun` | 与 run 一致 | 与 run 一致 |
 | `specmint heal` | 仅修 `verdict=needs-fix` | `--include-pending` / `--include-approved` / `--include-rejected` / `--force` / `--no-require-review` |
 
+> **v0.5.2+ 行为明确**（v0.5.1 及更早的实现与上表不一致，属实现 bug，v0.5.2 已修复）：
+>
+> - **全量跑与派生分支都走卡口**：裸 `specmint run`（无参数）以及 `--priority` / `--auth` / `--module` / `--group` 派生分支，此前在卡口开启时会报 `No tests found` 或绕过卡口把 pending / needs-fix / rejected 一起跑掉；v0.5.2 起与上表一致。
+> - **嵌套同名用例互不串扰**：`login-success` 与 `auth/login-success` 是两个独立用例，`specmint run login-success` 只跑根级那条，不会连带执行 `auth/login-success`（反之亦然）。
+> - **单文件直传走同一套卡口**：`specmint run .specmint/cases/x.spec.ts`、绝对路径、Windows 反斜杠路径都能正确反查 verdict（此前这些形式会被静默跳过检查）。
+
 ---
 
 ## 3. REPL 翻页裁决（默认入口）

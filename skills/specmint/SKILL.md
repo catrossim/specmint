@@ -20,6 +20,8 @@ triggers:
 
 **平台兼容**：v0.5.1+ 已完整支持 **Windows / macOS / Linux** 三端，子进程走 `src/utils/cross-platform.ts` 的 `spawnProcess()`（自动处理 `npx.cmd` shim / `shell: true`），路径用 `path.posix` 归一化，路径字符串不再假设 `/`。Windows 用户反馈 "spawn ENOENT / 路径找不到 / reviewer unknown" 时，引导升级到 v0.5.1+ 即可。
 
+**run / rerun 执行集**（v0.5.2+）：verdict 卡口开启时，全量跑与 `--priority` / `--auth` / `--module` / `--group` 派生分支经 Playwright **positional args** 传递用例文件（不是 `--grep`）。用户反馈 "No tests found / 卡口没生效 / 嵌套同名用例被连带执行" 时，引导升级到 v0.5.2+。
+
 ## 前置依赖校验（先检查再安装）
 
 **核心原则**：执行任何 `npm install` 或 `npx playwright install` 之前，**必须先校验当前环境是否已经满足**。已满足时直接跳过安装，不要重复下载。

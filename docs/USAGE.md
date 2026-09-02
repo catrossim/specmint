@@ -2,7 +2,9 @@
 
 面向测试工程师的完整使用指南。
 
-> v2.7 增量：Windows 全平台兼容（spawn / 路径 / reviewer / NTFS / 构建脚本 5 处 P0/P2 修复）。详见 [§13 升级指南](#13-升级指南)。
+> v2.7 增量 A（v0.5.1）：Windows 全平台兼容（spawn / 路径 / reviewer / NTFS / 构建脚本 5 处 P0/P2 修复）。
+> v2.7 增量 B（v0.5.2）：`run` / `rerun` 执行集修复——verdict 卡口开启时全量跑与派生分支不再报 "No tests found"、`rerun` 多条失败用例修复、嵌套同名串扰修复、单文件直传路径卡口修复。
+> 详见 [§13 升级指南](#13-升级指南)。
 
 ## 1. 项目布局
 
@@ -654,6 +656,36 @@ specmint generate "<desc>" --url https://example.com/dashboard
 - 子进程启动走 `src/utils/cross-platform.ts` 的 `spawnProcess()`，全平台一致行为
 - 路径字符串统一用 `path.posix` 归一化（新增 `src/utils/path-display.ts`），setup.ts 模板里出现的路径都是 `relative/forward/slash` 形式
 - 旧版本用户在 Windows 上 `.specmint/auth/<role>.setup.ts` 残留的绝对路径需要手动重跑 `specmint auth init <role>` 重新生成
+
+### v2.7 增量 B（run / rerun 执行集修复）
+
+完全向后兼容，零迁移成本。修复点（按严重度）：
+
+| # | 位置 | 问题 | 修复 |
+|---|------|------|------|
+| P0-1 | `src/commands/run.ts` 全量跑 / `--priority` / `--auth` / `--module` / `--group` 派生分支 | verdict 卡口开启时把 case 内部名（kebab-case）当 `--grep` 传给 Playwright，但 `--grep` 只匹配测试 full title（中文场景名），**所有平台**都报 "No tests found" | 改用 Playwright 的 **positional args**（`patterns`，按文件路径正则匹配），与 `<casesDir>/<name>.spec.ts` 一一对应 |
+| P0-2 | `src/commands/rerun.ts` | 多条失败用例用空格 join 成**单个** pattern（一个 argv 元素、路径里带空格的正则），必报 "No tests found" | 改为 patterns 数组逐条传递 |
+| P1 | `src/commands/run.ts` | `<name>.spec.ts` 形式的 pattern 会作为后缀子串误命中嵌套同名用例（`login-success` 误跑 `auth/login-success`） | pattern 改用完整 `specPath`（相对 cwd、正斜杠）+ 逐字符转义 + `$` 锚定 |
+| P2 | `src/commands/run.ts` | 单文件直传（`specmint run <path>`）时，Windows 反斜杠 / 绝对路径 / macOS `/tmp` 软链会让 verdict 反查命不中，卡口被**静默绕过** | 统一 `realpath` → `resolve` → `relative` → 正斜杠归一化后再反查；命不中库内用例时给出 INFO 提示 |
+
+升级步骤：
+
+1. 拉取 v0.5.2：`npm i specmint@0.5.2`
+2. **无需改动业务代码** —— 修复都在 CLI 内部
+3. 验证（review 卡口开启的项目）：
+
+   ```bash
+   # 之前必报 "No tests found"，现在应按 verdict 过滤后正常执行
+   npx specmint run
+   npx specmint run --priority P0
+   npx specmint rerun          # 有多条失败用例时
+   ```
+
+行为变化：
+
+- `run` 的无参数全量跑现在**真正生效 verdict 卡口**（此前裸 `specmint run` 会绕过卡口，把 pending / needs-fix / rejected 一起跑掉）
+- 嵌套同名用例（`login-success` 与 `auth/login-success`）互不串扰，`specmint run login-success` 只跑根级那条
+- `specmint run <绝对路径或反斜杠路径>` 现在会正确走 verdict 卡口（此前静默跳过检查）
 
 ---
 

@@ -137,13 +137,15 @@ npx specmint heal <case-name>
 | [**examples/e2e-verify.md**](./examples/e2e-verify.md) | 从零接入真实业务项目的完整 6 步流程（含 CI / FAQ） |
 | [**examples/login-flow.spec.ts**](./examples/login-flow.spec.ts) | 手写用例样例：spec 结构 / 语义定位器 / 用例分组 |
 | [**examples/with-auth/**](./examples/with-auth/) | **v0.5.0 新增**：generate 登录态注入端到端演示（`--auth <role>` 覆盖 / 缓存指纹隔离 / `generation.usedAuth` 审计） |
-| [**CHANGELOG.md**](./CHANGELOG.md) | 版本变更记录（v0.1.0 → v0.5.1） |
+| [**CHANGELOG.md**](./CHANGELOG.md) | 版本变更记录（v0.1.0 → v0.5.2） |
 
 ---
 
 ## 5. 当前状态
 
-- 当前发布版本：**`0.5.1`**（v2.7 增量：Windows 全平台兼容——`spawn('npx')` ENOENT 修复 / 路径归一化 / `process.env.USERNAME` 兜底 / NTFS pages 目录大小写不敏感 / 构建脚本去 chmod；详见 [CHANGELOG](./CHANGELOG.md#051---2026-09-01)）
+- 当前发布版本：**`0.5.2`**
+  - v2.7 增量 A（[0.5.1](./CHANGELOG.md#051---2026-09-01)）：Windows 全平台兼容——`spawn('npx')` ENOENT 修复 / 路径归一化 / `process.env.USERNAME` 兜底 / NTFS pages 目录大小写不敏感 / 构建脚本去 chmod
+  - v2.7 增量 B（[0.5.2](./CHANGELOG.md#052---2026-09-02)）：`run` / `rerun` 执行集修复——verdict 卡口开启时全量跑与 `--priority` / `--auth` / `--module` / `--group` 派生不再报 "No tests found"；`rerun` 多条失败用例修复；嵌套同名用例不再互相串扰；单文件直传支持绝对路径与反斜杠路径的卡口检查
 - Node：≥ 20
 - 自带依赖：`@earendil-works/pi-coding-agent` ^0.84.0、`commander` ^15.0.0、`typebox` ^1.0.0
 - **Peer 依赖（用户项目自行决定版本）**：`playwright` / `@playwright/test` 必须 ≥ 1.58.0。specmint **不再强制锁定**版本，集成方可在自己的 `package.json` 写任何兼容版本（例如固定 `1.69.0`、`>=1.58.0 <2.0.0` 等）。executor 实际调用的是用户 cwd 的 `npx playwright test`，运行时用的就是接入项目自带的版本。`specmint init` 会检测当前项目里是否已装这两个包，并在 `nextSteps` 给出推荐安装命令。

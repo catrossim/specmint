@@ -27,7 +27,22 @@ import type { RunConfigSnapshot, RunStatus } from '../store/types.js';
 import { logger } from '../utils/logger.js';
 
 export interface RunOptions {
+  /**
+   * 单文件路径（Playwright positional arg，匹配文件路径）。仅当 cases 列表收敛到 1 个时使用。
+   * 多文件请用 `patterns: string[]`。
+   */
   pattern?: string;
+  /**
+   * 多文件路径列表（Playwright 多个 positional args，每个都是文件路径正则）。
+   *
+   * 为什么用 positional arg 而不是 `--grep`：
+   * - `--grep` 只匹配测试的 full title（`<describe> > <test>` 拼接），
+   *   而 spec.ts 里的标题是人类可读的中文场景名（`用户认证 · 登录流程 > 合法凭据登录成功并跳转首页`），
+   *   不是 case 内部名（kebab-case，如 `auth/login-success`），所以传 case 名做 grep 永远匹配不到。
+   * - positional arg 是按文件路径正则匹配 spec.ts 文件名，case 内部名 → spec 文件路径
+   *   的映射是一一对应的（`<casesDir>/<name>.spec.ts`），所以用它做"按 case 名筛选"是稳的。
+   */
+  patterns?: string[];
   browser?: string;
   headed?: boolean;
   ui?: boolean;
@@ -171,7 +186,18 @@ function buildPlaywrightArgs(options: RunOptions & { runnerConfigPath: string })
   if (options.ui) args.push('--ui');
   if (options.debug) args.push('--debug');
   if (options.grep) args.push('--grep', options.grep);
-  if (options.pattern) args.push(options.pattern);
+  // pattern 与 patterns 并存防御：positional args 叠加是"取并集"，会让执行集大于调用方预期
+  // （调用方往往只想二选一）。这里 patterns 优先、忽略 pattern，避免静默扩大执行范围。
+  if (options.patterns && options.patterns.length > 0) {
+    if (options.pattern) {
+      logger.warn(
+        '[executor] pattern 与 patterns 同时传入，已忽略 pattern（positional args 并集会扩大执行集）',
+      );
+    }
+    args.push(...options.patterns);
+  } else if (options.pattern) {
+    args.push(options.pattern);
+  }
   if (options.passthrough) args.push(...options.passthrough);
   return args;
 }
