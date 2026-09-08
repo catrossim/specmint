@@ -10,6 +10,30 @@ specmint 项目的所有重要变更都会记录在这里。版本号遵循 [Sem
 
 ---
 
+## [未发布]
+
+### 新增
+
+- **第 5 个 skill `specmint-flow`**：把「生成用例」与「管理用例」串成一条流水线，填补
+  `specmint-author`（写+纳管）与 `specmint-operate`（审+跑+修）之间的断点。定义 6 个阶段
+  —— S0 准备 / S1 生成 / S2 `adopt` / S3 `lint`+`verify`+自跑 / S4 `review` / S5 `run`+`heal` 回环，
+  并给出「退出码 → 下一跳」分支表（覆盖 2/4/7/9/11/15）。
+- **`_shared/handoff.md`（生成器交接契约，新共享片段）**：外部生成器（外部「生成 Playwright 用例」
+  的 skill / `specmint generate` / 宿主 agent / 人工）与 specmint 之间的唯一接口——落盘路径
+  `.specmint/cases/<group>/<name>.spec.ts`、纯 Playwright TS、文件头 `@specmint` 注释、
+  **生成方不写 `meta.json`、不调用 specmint 命令**，纳管及之后全部由 specmint 接管。
+- **三种生成来源统一出口**：S1 支持 ① 内置 `specmint generate`（含 `--batch-file` /
+  `--concurrency` / `--template` 快路径 / `--checkpoint|--resume` 断点续跑，内部已写 meta.json 故 S2 可跳过）、
+  ② 外部生成 skill（给出调用 prompt 模板 + 产出后自查清单）、③ 宿主 agent / 人工手写。
+
+### 变更
+
+- `specmint`（路由 skill）：分流表新增 `specmint-flow` 行；生命周期 ① 明确三种用例来源；不确定走哪条先读 flow。
+- `specmint-author` / `specmint-operate`：补上流水线上下游指针（author 完成后回 flow 继续 S3；operate 声明自己是 S4–S5 段）。
+- `README.md`：新增 §2.7「用 skill 串起全流程（agent 侧）」；`skill export` 说明由 4 个改为 5 个 skill。
+
+---
+
 ## [0.7.0] - 2026-09-02（内部 v2.9）
 
 在「lint → run」之间补上**静态可达性层**，并把 lint 升级为可配置化、把 auth 错误码从「隐式」变「可预测」。三件事互不依赖：

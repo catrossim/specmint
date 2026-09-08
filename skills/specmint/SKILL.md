@@ -25,7 +25,8 @@ specmint 负责纳管、校验、人工裁决、执行、归档。
 ## 生命周期（核心模型）
 
 ```
-① 写用例        宿主 agent / 人工 写 .spec.ts  → 见 specmint-author
+① 写用例        三种来源：specmint generate（LLM）/ 外部生成 skill / 宿主 agent 手写
+                                                    → 见 specmint-flow S1 + specmint-author
       ↓
 ② 纳管+校验     specmint adopt（静态校验，红线拒绝入仓）  verdict=pending
       ↓
@@ -35,6 +36,8 @@ specmint 负责纳管、校验、人工裁决、执行、归档。
       ↓
 ⑤ 失败修复     specmint heal（仅 needs-fix）→ 回到 ②
 ```
+
+完整链路（含每个阶段的失败分支与退出码跳转）见 **`specmint-flow`**。
 
 **关键约束**：
 
@@ -48,12 +51,14 @@ specmint 负责纳管、校验、人工裁决、执行、归档。
 
 | 你要做的事 | 用哪个 skill |
 |---|---|
+| **从零到跑通 / 批量生成并纳管 / 把外部「生成用例」的 skill 接进 specmint** | **`specmint-flow`** |
 | 写新用例 / 生成 Playwright 用例 / 把已有 spec 纳管进库 | **`specmint-author`** |
 | 审核用例 / 跑测试 / 重跑失败 / 查看历史 / 修用例 / 配 CI 门禁 | **`specmint-operate`** |
 | 页面需要登录 / 配 storageState / 多角色切换 | **`specmint-auth`** |
 
-一次会话常需串起多步，典型顺序：
-`specmint-author`（写+纳管）→ `specmint-operate`（裁决+执行）→ 失败则回到 author 修改。
+一次会话常需串起多步。**不确定走哪条，就先读 `specmint-flow`**——它定义完整链路的分阶段跳转。
+典型顺序：`specmint-flow` S1（生成）→ `specmint-author`（纳管）→ `specmint-operate`（裁决+执行）
+→ 失败则回到 author 修改。
 
 ---
 

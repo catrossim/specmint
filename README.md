@@ -120,12 +120,34 @@ npx specmint run                             # 仅跑 verdict=approved（卡口�
 
 | 想了解 | 看这里 |
 |---|---|
+| 用 agent skill 串起「生成 → 纳管 → 裁决 → 执行」 | [**§2.7 用 skill 串起全流程**](#27-用-skill-串起全流程agent-侧) |
 | 完整 6 步教程（从零接入真实业务项目） | [**examples/e2e-verify.md**](./examples/e2e-verify.md) |
 | 手写用例的代码结构（spec + 语义定位器） | [**examples/login-flow.spec.ts**](./examples/login-flow.spec.ts) |
 | examples/ 目录约定 + 速查表 | [**examples/README.md**](./examples/README.md) |
 | 鉴权 / auth 子系统 / CI 集成 / FAQ | [**examples/e2e-verify.md §5–6**](./examples/e2e-verify.md) |
 
 完整使用手册（配置 / 命令清单 / PI 输出契约 / 缓存 / 批次号 / 退出码 / 升级指南等）见 [**docs/USAGE.md**](./docs/USAGE.md)。
+
+### 2.7 用 skill 串起全流程（agent 侧）
+
+`specmint skill export --install` 把内置 skill 装进 IDE（`--target claude-code` 装到 `.claude/skills/`）：
+
+```bash
+npx specmint skill export --install            # → .codebuddy/skills/<name>/SKILL.md
+```
+
+| skill | 负责 |
+|---|---|
+| **`specmint-flow`** | **编排**：S1 生成 → S2 `adopt` → S3 `lint`/`verify` → S4 `review` → S5 `run` → `heal` 回环；同时定义外部生成器（外部生成 skill / `specmint generate` / 手写）的交接契约 |
+| `specmint-author` | 写用例 + 纳管（S1–S2 细节） |
+| `specmint-operate` | 裁决 + 执行 + 修复 + CI 门禁（S4–S5 细节） |
+| `specmint-auth` | 登录态（setup 文件 / storageState / 多角色） |
+| `specmint` | 路由：按用户意图分流到上面几个 |
+
+**接一个会生成 Playwright 用例的外部 skill**：让它只负责「写文件」——产出
+`.specmint/cases/<group>/<name>.spec.ts`（标准 Playwright TS + 文件头 `@specmint` 注释），
+**不写 `meta.json`、不调用任何 specmint 命令**；之后由 `specmint-flow` 从 S2 `adopt`
+接管纳管、校验、裁决与执行。
 
 ---
 
@@ -148,7 +170,7 @@ npx specmint run                             # 仅跑 verdict=approved（卡口�
 | `history` | 查看运行历史 |
 | `heal <name>` | 自动修复失败用例（仅 `verdict=needs-fix`） |
 | `review list\|set\|show` | 人工裁决 / REPL 翻页（见 [docs/review.md](./docs/review.md)） |
-| `skill export [--install]` | **（v0.6.0 重写）** 批量导出 4 个 skill（specmint / author / operate / auth），含 `_shared` 片段拼接；`--install` 一键装到 `.codebuddy/skills/` 或 `.claude/skills/` |
+| `skill export [--install]` | **（v0.6.0 重写）** 批量导出 5 个 skill（specmint / flow / author / operate / auth），含 `_shared` 片段拼接；`--install` 一键装到 `.codebuddy/skills/` 或 `.claude/skills/` |
 | `models list\|current\|select` | 切换 agent model（数据源：pi-coding-agent） |
 | `auth list\|init\|refresh\|generate\|doctor\|debug\|lint\|matrix` | 管理 auth 角色（登录态 / 持久化 / 运维诊断，见 §3.2） |
 

@@ -14,7 +14,10 @@ triggers:
   - CI 门禁
 ---
 
-你负责用例的**裁决、执行、修复与归档**。
+你负责用例的**裁决、执行、修复与归档**（完整流水线的 S4–S5 段）。
+
+> 用例还没生成/纳管？先去 **`specmint-flow`**（S1 生成 → S2 adopt → S3 lint/verify），
+> 或 **`specmint-author`**（手写 + 纳管）。本 skill 假定用例已在库里。
 
 <!-- include: layout.md -->
 

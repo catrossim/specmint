@@ -32,6 +32,9 @@ triggers:
 
 ### 第 1 步：写 spec.ts
 
+> 用例由**外部生成 skill / `specmint generate`** 产出的场景（不是你手写），
+> 交接契约与整条流水线见 **`specmint-flow` S1/S2**——本 skill 的流程对它同样适用。
+
 落盘位置：`.specmint/cases/<group>/<name>.spec.ts`
 
 命名：group 与用例名第一段一致（`auth/login-success` → `cases/auth/login-success.spec.ts`），
@@ -182,6 +185,7 @@ setup 文件本身的静态校验见 `specmint auth lint <name>`（明文密码 
 ## 完成后
 
 告诉用户：用例已纳管且为 `pending`，**必须经人工裁决才能执行**，
-下一步用 `specmint-operate`（或直接 `specmint review`）。
+下一步用 `specmint-operate`（或直接 `specmint review`）；
+若本轮是「批量生成 + 纳管」的一部分，回到 **`specmint-flow`** 继续 S3 校验与之后的阶段。
 
 <!-- include: contract.md -->
